@@ -5,3 +5,7 @@ typer>=0.12
 rich>=13
 pydantic>=2.7
 chardet>=5
+
+# Web 前端（第 5、6 步）
+fastapi>=0.110
+uvicorn[standard]>=0.29
