@@ -24,6 +24,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from . import models
+from . import session as session_store
 from .config import ARTIFACTS_DIR, PROJECT_ROOT
 from .llm import EchoClient
 from .loop import ApiClient, run
@@ -41,6 +42,7 @@ app = FastAPI(title="da_agent", docs_url="/api/docs")
 
 class AskRequest(BaseModel):
     question: str
+    session_id: str | None = None
     max_steps: int = 8
     fake: bool = False
     workspace: str | None = None
@@ -94,9 +96,27 @@ def ask(req: AskRequest) -> StreamingResponse:
         records: list[dict] = []
         try:
             workspace = load(req.workspace) if req.workspace else current()
+            session = (session_store.load(workspace, req.session_id)
+                       if req.session_id else session_store.create(workspace))
             client = EchoClient() if req.fake else ApiClient(models.current_settings())
-            for event in run(req.question, client=client,
-                             max_steps=req.max_steps, workspace=workspace):
+
+            for event in run(req.question, client=client, max_steps=req.max_steps,
+                             workspace=workspace, history=session.messages):
+                if event["type"] == "run_start":
+                    event["session_id"] = session.id
+                    event["session_title"] = session.title
+
+                if event["type"] == "run_end" and event.get("ok"):
+                    # 只保存成功的轮次：失败的那一轮没有 assistant 消息，
+                    # 存下来会在下次请求里留下一条"只有提问没有回答"的悬空历史
+                    session.messages = event["messages"][1:]      # 去掉 system
+                    if session.title in ("", "新对话"):
+                        session.title = session_store.make_title(req.question)
+                    for key in ("prompt_tokens", "completion_tokens"):
+                        session.usage[key] = session.usage.get(key, 0) + int(
+                            (event.get("usage") or {}).get(key) or 0)
+                    session_store.save(workspace, session)
+
                 records.append(event)
                 yield _sse(_wire(event))
         except Exception as exc:            # 任何没收住的异常都要变成事件，不能断流
@@ -176,6 +196,32 @@ def tables(workspace: str | None = None) -> list[dict]:
         }
         for table in ws.catalog.get("tables", [])
     ]
+
+
+# --------------------------------------------------------------------------- #
+# 会话
+# --------------------------------------------------------------------------- #
+
+@app.get("/api/sessions")
+def list_sessions(workspace: str | None = None) -> list[dict]:
+    ws = load(workspace) if workspace else current()
+    return session_store.list_sessions(ws)
+
+
+@app.get("/api/sessions/{session_id}")
+def session_detail(session_id: str, workspace: str | None = None) -> dict:
+    ws = load(workspace) if workspace else current()
+    try:
+        return session_store.load(ws, session_id).to_dict()
+    except FileNotFoundError:
+        raise HTTPException(404, f"会话不存在：{session_id}") from None
+
+
+@app.delete("/api/sessions/{session_id}")
+def delete_session(session_id: str, workspace: str | None = None) -> dict:
+    ws = load(workspace) if workspace else current()
+    session_store.delete(ws, session_id)
+    return {"ok": True, "sessions": session_store.list_sessions(ws)}
 
 
 # --------------------------------------------------------------------------- #

@@ -22,6 +22,9 @@ const state = {
   activeWs: null,
   tables: [],
   models: { items: [], active: null, fallback: null },
+  sessions: [],
+  activeSession: null,
+  pendingContext: null,
   busy: false,
 };
 
@@ -105,20 +108,19 @@ function append(className, html) {
 
 let toolCards = new Map();
 
-function addToolCall(event) {
+function buildToolCard(id, name, args) {
   const empty = $('empty');
   if (empty) empty.remove();
 
-  const args = event.args || {};
   const sqlText = args && typeof args === 'object' && 'sql' in args
     ? args.sql
-    : JSON.stringify(args, null, 2);
+    : JSON.stringify(args ?? {}, null, 2);
 
   const card = document.createElement('div');
   card.className = 'msg tool';
   card.innerHTML = `
     <div class="tool-head">
-      <span class="pill">${esc(event.name)}</span>
+      <span class="pill">${esc(name)}</span>
       <span class="meta" data-role="meta">运行中…</span>
     </div>
     <div class="sql-block">
@@ -128,8 +130,13 @@ function addToolCall(event) {
   card.querySelector('pre').textContent = sqlText || '（这次调用没有 SQL 参数）';
 
   logEl.appendChild(card);
-  toolCards.set(event.id, card);
+  toolCards.set(id, card);
   scrollToBottom();
+  return card;
+}
+
+function addToolCall(event) {
+  buildToolCard(event.id, event.name, event.args);
 }
 
 function fillToolResult(event) {
@@ -186,10 +193,21 @@ function fillToolResult(event) {
 
 function handleEvent(event) {
   switch (event.type) {
-    case 'run_start':
+    case 'context':
+      state.pendingContext = event;
+      break;
+    case 'run_start': {
       append('user', esc(event.question));
+      if (event.session_id) state.activeSession = event.session_id;
+      const ctx = state.pendingContext;
+      if (ctx && (ctx.shrunk || ctx.dropped)) {
+        append('usage', `上下文已压缩：${ctx.shrunk || 0} 轮精简 · `
+          + `${ctx.dropped || 0} 轮省略（约 ${ctx.tokens || 0} tokens）`);
+      }
+      state.pendingContext = null;
       setStatus('查询中…', 'busy');
       break;
+    }
     case 'text':
       append('narration', esc(event.text));
       break;
@@ -233,6 +251,7 @@ async function ask(question) {
         question,
         fake: FAKE_MODE,
         workspace: state.activeWs || undefined,
+        session_id: state.activeSession || undefined,
       }),
     });
     if (!response.ok || !response.body) throw new Error(`HTTP ${response.status}`);
@@ -273,6 +292,8 @@ async function ask(question) {
     sendBtn.disabled = false;
     inputEl.disabled = false;
     inputEl.focus();
+    // 这一轮可能产生了新会话或改了标题，刷新一下列表
+    loadSessions().catch(() => {});
   }
 }
 
@@ -324,6 +345,103 @@ function insertTableTemplate(name) {
   inputEl.value = `SELECT * FROM ${name} LIMIT 10`;
   inputEl.focus();
   autosize();
+}
+
+/* ---------------------- 会话：列表 / 打开 / 回放 ---------------------- */
+
+function shortTime(iso) {
+  if (!iso) return '';
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return '';
+  const now = new Date();
+  const pad = (n) => String(n).padStart(2, '0');
+  if (date.toDateString() === now.toDateString()) {
+    return `${pad(date.getHours())}:${pad(date.getMinutes())}`;
+  }
+  return `${date.getMonth() + 1}/${date.getDate()}`;
+}
+
+function safeJson(text) {
+  try {
+    return JSON.parse(text);
+  } catch (err) {
+    return { raw: String(text) };
+  }
+}
+
+function renderSessions() {
+  const box = $('session-list');
+  box.innerHTML = '';
+
+  if (!state.sessions.length) {
+    box.innerHTML = '<p class="side-empty">还没有对话</p>';
+    return;
+  }
+
+  for (const session of state.sessions) {
+    const item = document.createElement('button');
+    item.className = `session-item${session.id === state.activeSession ? ' active' : ''}`;
+    item.innerHTML = `<span class="ss-title">${esc(session.title)}</span>`
+      + `<span class="ss-meta">${session.turns} 轮 · ${shortTime(session.updated_at)}</span>`;
+    item.onclick = () => openSession(session.id);
+    box.appendChild(item);
+  }
+}
+
+async function loadSessions() {
+  if (!state.activeWs) {
+    state.sessions = [];
+    renderSessions();
+    return;
+  }
+  state.sessions = await api(`/api/sessions?workspace=${encodeURIComponent(state.activeWs)}`);
+  renderSessions();
+}
+
+async function openSession(sessionId) {
+  if (state.busy) return;
+  try {
+    const data = await api(
+      `/api/sessions/${encodeURIComponent(sessionId)}?workspace=${encodeURIComponent(state.activeWs)}`);
+    state.activeSession = sessionId;
+    clearLog();
+    renderHistory(data.messages || []);
+    renderSessions();
+    closeSidebar();
+  } catch (err) {
+    setStatus(`打开会话失败：${err.message}`, 'error');
+  }
+}
+
+function newSession() {
+  if (state.busy) return;
+  state.activeSession = null;
+  clearLog();
+  renderSessions();
+  inputEl.focus();
+  closeSidebar();
+}
+
+/** 把存下来的 messages 还原成界面。和实时渲染共用同一套卡片函数。 */
+function renderHistory(messages) {
+  toolCards = new Map();
+  for (const message of messages) {
+    if (message.role === 'user') {
+      append('user', esc(message.content || ''));
+    } else if (message.role === 'assistant') {
+      const calls = message.tool_calls || [];
+      for (const call of calls) {
+        buildToolCard(call.id, call.function?.name || 'tool',
+          safeJson(call.function?.arguments));
+      }
+      if (message.content) append('answer', markdown(message.content));
+    } else if (message.role === 'tool') {
+      fillToolResult({ id: message.tool_call_id, result: safeJson(message.content) });
+    }
+  }
+  // 渲染完高度会再变一次（字体、表格布局），滚动两次才稳
+  scrollToBottom();
+  requestAnimationFrame(scrollToBottom);
 }
 
 function renderModelChip() {
@@ -401,8 +519,10 @@ async function switchWorkspace(id) {
   try {
     await api('/api/workspaces/activate', { method: 'POST', body: { id } });
     state.activeWs = id;
+    state.activeSession = null;
     renderWorkspaces();
     await loadTables();
+    await loadSessions();
     clearLog();
     closeSidebar();
   } catch (err) {
@@ -460,6 +580,8 @@ document.addEventListener('keydown', (event) => {
     document.querySelectorAll('.modal:not([hidden])').forEach((modal) => { modal.hidden = true; });
   }
 });
+
+$('btn-new-session').addEventListener('click', newSession);
 
 /* 添加工作区 */
 $('btn-add-ws').addEventListener('click', () => {
@@ -648,6 +770,7 @@ async function boot() {
     await loadWorkspaces();
     await loadModels();
     await loadTables();
+    await loadSessions();
     setStatus('就绪', '');
   } catch (err) {
     setStatus(`初始化失败：${err.message}`, 'error');
@@ -659,6 +782,28 @@ async function boot() {
     if (new URLSearchParams(location.search).get('panel') === 'model') {
       openModal('modal-model');
     }
+    return;
+  }
+
+  // ?ws=<id> 先切到指定工作区，再处理 ?session=<id>
+  const params = new URLSearchParams(location.search);
+  const urlWs = params.get('ws');
+  if (urlWs && urlWs !== state.activeWs) {
+    try {
+      await api('/api/workspaces/activate', { method: 'POST', body: { id: urlWs } });
+      state.activeWs = urlWs;
+      state.activeSession = null;
+      renderWorkspaces();
+      await loadTables();
+      await loadSessions();
+    } catch (err) {
+      setStatus(`打开工作区失败：${err.message}`, 'error');
+    }
+  }
+
+  const urlSession = params.get('session');
+  if (urlSession) {
+    await openSession(urlSession);
   }
 }
 

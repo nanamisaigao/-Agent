@@ -82,26 +82,39 @@ def _parse_arguments(raw: str) -> dict | str:
 
 def run(question: str, client: ChatClient | None = None,
         max_steps: int = 8, workspace=None,
+        history: list[dict] | None = None, budget: int | None = None,
         system_prompt: str | None = None) -> Iterator[dict]:
     """执行一次问答，逐个 yield 事件。
 
-    事件类型：run_start / text / tool_call / tool_result / answer / run_end / error
+    事件类型：context / run_start / text / tool_call / tool_result / answer / run_end / error
 
     workspace 决定"查哪个库、用哪份数据字典、带哪些业务笔记"。
-    不传就用当前激活的工作区，方便命令行直接跑。
+    history 是之前的对话（不含 system），多轮追问靠它。
+    不传 workspace 就用当前激活的那个，方便命令行直接跑。
     """
+    from .session import default_budget, prepare
     from .workspace import current
 
     ws = workspace or current()
     ctx = ToolContext(db_path=ws.db, workspace_id=ws.id)
 
+    budget = budget or default_budget()
+    prepared = prepare(history or [], budget)
+
+    system = system_prompt or build_system_prompt(ws.catalog, ws.notes, ws.name)
+    if prepared.note:
+        system = f"{system}\n\n{prepared.note}"
+
     client = client or ApiClient()
     messages: list[dict] = [
-        {"role": "system",
-         "content": system_prompt or build_system_prompt(ws.catalog, ws.notes, ws.name)},
+        {"role": "system", "content": system},
+        *prepared.messages,
         {"role": "user", "content": question},
     ]
     usage = {"prompt_tokens": 0, "completion_tokens": 0}
+
+    yield {"type": "context", "tokens": prepared.tokens, "budget": budget,
+           "shrunk": prepared.shrunk, "dropped": prepared.dropped}
 
     yield {"type": "run_start", "question": question,
            "workspace": ws.id, "workspace_name": ws.name}
@@ -124,6 +137,9 @@ def run(question: str, client: ChatClient | None = None,
             yield {"type": "text", "text": reply.content}
 
         if not reply.tool_calls:
+            # 这一条必须写进 messages：多轮对话时，下一轮的模型要靠它知道
+            # 上一轮到底答了什么，否则历史里就只有提问没有回答。
+            messages.append({"role": "assistant", "content": reply.content or ""})
             yield {"type": "answer", "text": reply.content or "（模型没有给出文字回答）"}
             yield {"type": "run_end", "ok": True, "steps": step,
                    "usage": usage, "messages": messages}

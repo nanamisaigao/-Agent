@@ -354,6 +354,15 @@ def _render(event: dict) -> None:
         if result.get("hint"):
             console.print(f"[yellow]{result['hint']}[/yellow]")
 
+    elif kind == "context":
+        parts = []
+        if event.get("shrunk"):
+            parts.append(f"压缩 {event['shrunk']} 轮")
+        if event.get("dropped"):
+            parts.append(f"丢弃 {event['dropped']} 轮")
+        if parts:
+            console.print(f"[dim]上下文：{'，'.join(parts)}（约 {event.get('tokens', 0)} tokens）[/dim]")
+
     elif kind == "answer":
         console.print()
         console.print(Markdown(event.get("text") or ""))
@@ -378,26 +387,42 @@ def ask(
     fake: bool = typer.Option(False, "--fake", help="离线演示：不调模型，用脚本客户端验证循环"),
     trace: bool = typer.Option(True, "--trace/--no-trace", help="把事件流写成 JSONL 便于复盘"),
     ws: str | None = typer.Option(None, "--ws", help="工作区 ID，默认当前"),
+    session_id: str | None = typer.Option(None, "--session", help="继续某个已有会话"),
 ) -> None:
     """问一个问题，看 agent 一步步怎么查出来。"""
     from . import models
+    from . import session as session_store
     from .llm import EchoClient
     from .loop import ApiClient, run
     from .trace import write_trace
 
     workspace = _load_workspace(ws)
+    session = (session_store.load(workspace, session_id) if session_id
+               else session_store.create(workspace))
+
     console.rule(f"[bold]{question}[/bold] [dim]· {workspace.name}[/dim]")
     client = EchoClient() if fake else ApiClient(models.current_settings())
 
     records: list[dict] = []
-    for event in run(question, client=client, max_steps=max_steps, workspace=workspace):
+    for event in run(question, client=client, max_steps=max_steps,
+                     workspace=workspace, history=session.messages):
+        if event["type"] == "run_start":
+            event["session_id"] = session.id
+        if event["type"] == "run_end" and event.get("ok"):
+            session.messages = event["messages"][1:]
+            if session.title in ("", "新对话"):
+                session.title = session_store.make_title(question)
+            session_store.save(workspace, session)
+
         records.append(event)
         _render(event)
+
+    console.print(f"[dim]会话 {session.id} · 继续追问加 --session {session.id}[/dim]")
 
     if trace:
         path = write_trace(records)
         if path:
-            console.print(f"\n[dim]事件流已保存：{path}[/dim]")
+            console.print(f"[dim]事件流已保存：{path}[/dim]")
 
 
 @app.command()
