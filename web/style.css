@@ -197,11 +197,11 @@ body {
   overflow-wrap: anywhere;
 }
 
-/* agent 的中间叙述 */
+/* agent 的中间叙述：和卡片左边缘对齐，避免流式内容降级时横向跳动 */
 .msg.narration {
   color: var(--dim);
   font-size: 14px;
-  padding-left: 2px;
+  padding: 2px 16px;
 }
 
 /* 最终回答 */
@@ -594,8 +594,10 @@ pre.stdout {
 .list-row:hover .row-del { opacity: 1; }
 .row-del:hover { color: var(--err); background: var(--hover); }
 
-/* 流式输出时的光标 */
-.msg.answer.streaming::after {
+/* 流式输出：内容和 .answer 同样的内边距，结束时只加背景和边框，
+   避免"文字先出现在无边框区域、最后突然被卡片包住"的跳变 */
+.msg.stream-text { padding: 14px 16px; }
+.msg.stream-text::after {
   content: "▍";
   margin-left: 2px;
   color: var(--accent);

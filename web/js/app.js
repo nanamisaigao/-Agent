@@ -137,41 +137,64 @@ function append(className, html) {
   return div;
 }
 
-/* 流式输出：先建一个占位气泡，逐字往里塞，最后再用 markdown 重绘一遍 */
+/* 流式输出：先占一个中性容器，每 60ms 用 markdown 重绘一次，结束时只换样式。
+   这样不会出现"纯文本突然跳成排版好的样子"，也不会先渲染成答案卡片再降级成叙述。 */
 let streamNode = null;
 let streamText = '';
+let streamTimer = null;
 
-function appendToken(text) {
-  if (!streamNode) {
-    const empty = $('empty');
-    if (empty) empty.remove();
-    streamNode = document.createElement('div');
-    streamNode.className = 'msg answer streaming';
-    logEl.appendChild(streamNode);
-    streamText = '';
-  }
-  streamText += text;
-  streamNode.textContent = streamText;
+function ensureStreamNode() {
+  if (streamNode) return;
+  const empty = $('empty');
+  if (empty) empty.remove();
+  streamNode = document.createElement('div');
+  streamNode.className = 'msg stream-text';
+  logEl.appendChild(streamNode);
+}
+
+function renderStream() {
+  streamTimer = null;
+  if (!streamNode) return;
+  streamNode.innerHTML = markdown(streamText);
   scrollToBottom();
 }
 
-/** 结束流式气泡；返回是否真的处理了 */
-function finishStream(finalText) {
-  if (!streamNode) return false;
-  const target = streamNode;
+function appendToken(text) {
+  ensureStreamNode();
+  streamText += text;
+  if (!streamTimer) streamTimer = setTimeout(renderStream, 60);
+}
+
+/** 摘掉当前流式节点，交还给调用方处理 */
+function takeStream() {
+  if (!streamNode) return null;
+  if (streamTimer) {
+    clearTimeout(streamTimer);
+    streamTimer = null;
+  }
+  const node = streamNode;
   streamNode = null;
+  return node;
+}
+
+/** 结束流式；返回是否真的处理了 */
+function finishStream(finalText) {
+  const node = takeStream();
+  if (!node) return false;
+  const text = finalText || streamText;
   streamText = '';
-  target.classList.remove('streaming');
-  target.innerHTML = markdown(finalText || target.textContent || '');
+  node.className = 'msg answer';
+  node.innerHTML = markdown(text || node.textContent || '');
   scrollToBottom();
   return true;
 }
 
-/** 模型边说边调工具：把流式气泡降级成普通叙述 */
+/** 模型边说边调工具：把流式内容降级成普通叙述 */
 function demoteStream() {
-  if (!streamNode) return;
-  streamNode.className = 'msg narration';
-  streamNode = null;
+  const node = takeStream();
+  if (!node) return;
+  node.className = 'msg narration';
+  node.innerHTML = esc(streamText);
   streamText = '';
 }
 
@@ -362,8 +385,12 @@ function handleEvent(event) {
       appendToken(event.text || '');
       break;
     case 'text':
-      demoteStream();
-      append('narration', esc(event.text));
+      // 已经流式显示过就不再重复追加
+      if (streamNode) {
+        demoteStream();
+      } else {
+        append('narration', esc(event.text));
+      }
       break;
     case 'tool_call':
       demoteStream();
@@ -407,6 +434,10 @@ async function ask(question) {
   toolCards = new Map();
   streamNode = null;
   streamText = '';
+  if (streamTimer) {
+    clearTimeout(streamTimer);
+    streamTimer = null;
+  }
   state.lastContext = null;
   setStatus('查询中…', 'busy');
 
@@ -673,7 +704,10 @@ function renderHistory(messages) {
         buildToolCard(call.id, call.function?.name || 'tool',
           safeJson(call.function?.arguments));
       }
-      if (message.content) append('answer', markdown(message.content));
+      if (message.content) {
+        // 带工具调用的 assistant 文本是"边想边说"，用叙述样式，别当成最终答案
+        append(calls.length ? 'narration' : 'answer', markdown(message.content));
+      }
     } else if (message.role === 'tool') {
       fillToolResult({ id: message.tool_call_id, result: safeJson(message.content) });
     }

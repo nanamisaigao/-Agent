@@ -133,10 +133,12 @@ def run(question: str, client: ChatClient | None = None,
 
         try:
             reply: LLMReply | None = None
+            streamed_here = False
             # 有 stream 就用流式（逐字推给前端），没有就退回一次性调用
             if hasattr(client, "stream"):
                 for kind, value in client.stream(messages, schemas()):
                     if kind == "text":
+                        streamed_here = True
                         yield {"type": "token", "text": value}
                     else:
                         reply = value
@@ -155,8 +157,9 @@ def run(question: str, client: ChatClient | None = None,
         usage["completion_tokens"] += int(reply.usage.get("completion_tokens") or 0)
 
         # 只有"还要继续调工具"时的文字才算中间叙述；
-        # 没有工具调用时，这段文字就是最终回答，由 answer 事件承载，避免重复渲染
-        if reply.content and reply.tool_calls:
+        # 没有工具调用时，这段文字就是最终回答，由 answer 事件承载，避免重复渲染。
+        # 流式已经把它推给前端了，这里就不要再发一遍，否则同一段话会出现两次。
+        if reply.content and reply.tool_calls and not streamed_here:
             yield {"type": "text", "text": reply.content}
 
         if not reply.tool_calls:
