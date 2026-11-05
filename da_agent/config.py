@@ -22,6 +22,10 @@ CATALOG_PATH = DATA_DIR / "olist.catalog.json"  # 数据字典（衍生品）
 ARTIFACTS_DIR = PROJECT_ROOT / "artifacts"  # 图、导出结果、报告（后面才用）
 TRACES_DIR = ARTIFACTS_DIR / "traces"       # 每次问答的事件流与完整上下文（JSONL）
 
+# 工作区：一个数据库 = 一个目录（元数据 + 数据字典 + 笔记）
+WORKSPACES_DIR = PROJECT_ROOT / "workspaces"
+ACTIVE_WS_FILE = WORKSPACES_DIR / "active.json"
+
 # 所有表共用的读取参数：Olist 的 CSV 带 BOM 和引号，这一组参数能通吃
 CSV_ENCODING = "utf-8-sig"
 

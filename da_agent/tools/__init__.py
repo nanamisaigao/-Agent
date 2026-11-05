@@ -1,6 +1,6 @@
 """工具注册表。
 
-新增工具只需三步：写一个 Tool，加进 TOOLS 元组，写清楚描述。
+新增工具只需三步：写一个 Tool，加进 TOOLS 元组，把描述写清楚。
 主循环不认识具体工具，只认识 `schemas()` 和 `call()`。
 """
 
@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 
-from .base import Tool
+from .base import Tool, ToolContext
 from .sql import RUN_SQL
 
 TOOLS: dict[str, Tool] = {tool.name: tool for tool in (RUN_SQL,)}
@@ -19,7 +19,7 @@ def schemas() -> list[dict]:
     return [tool.schema() for tool in TOOLS.values()]
 
 
-def call(name: str, arguments: str) -> dict:
+def call(name: str, arguments: str, ctx: ToolContext) -> dict:
     """执行一次工具调用。任何异常都转成结构化错误，绝不让主循环崩。"""
     tool = TOOLS.get(name)
     if tool is None:
@@ -42,9 +42,9 @@ def call(name: str, arguments: str) -> dict:
         return {"ok": False, "error": "参数必须是 JSON 对象"}
 
     try:
-        return tool.fn(args)
+        return tool.fn(args, ctx)
     except Exception as exc:  # 工具自己炸了，也不能拖垮循环
         return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
 
 
-__all__ = ["Tool", "TOOLS", "schemas", "call"]
+__all__ = ["Tool", "ToolContext", "TOOLS", "schemas", "call"]

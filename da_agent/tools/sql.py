@@ -1,22 +1,20 @@
 """run_sql 工具：唯一的数据获取通道。
 
-注意返回给模型的东西不是 CLI 里那张漂亮的表，而是一份结构化 JSON：
-列名、行、是否截断、耗时、错误和提示。
-
-为什么不直接返回 DataFrame：模型只吃文本。而且表越大，越应该压缩。
+返回给模型的是结构化 JSON（列名、行、是否截断、耗时、错误、提示），
+不是 CLI 里那张漂亮的表——模型只吃文本，而且表越大越要压缩。
 """
 
 from __future__ import annotations
 
 from ..db import run_query
-from .base import Tool
+from .base import Tool, ToolContext
 
 
-def _run(args: dict) -> dict:
+def _run(args: dict, ctx: ToolContext) -> dict:
     sql = str(args.get("sql") or "").strip()
     limit = max(1, min(int(args.get("limit") or 30), 200))
 
-    result = run_query(sql, limit=limit)
+    result = run_query(sql, limit=limit, path=ctx.db_path)
     payload = {
         "ok": result.ok,
         "columns": result.columns,
@@ -45,7 +43,7 @@ RUN_SQL = Tool(
         "在只读的 SQLite 数据库上执行一条 SELECT 查询，用来获取分析所需的原始数据。\n"
         "规则：\n"
         "- 只支持单条 SELECT / WITH 语句；多条语句、写操作、PRAGMA 都会被拒绝。\n"
-        "- 表结构见系统提示中的表卡片；时间字段是文本 'YYYY-MM-DD HH:MM:SS'，"
+        "- 表结构见系统提示中的表卡片；时间列多为文本 'YYYY-MM-DD HH:MM:SS'，"
         "按月分组用 strftime('%Y-%m', 列名)。\n"
         "- 金额是 REAL 类型，做汇总后请用 ROUND(x, 2)。\n"
         "- 结果默认最多 30 行；要拿全量请用聚合（GROUP BY）而不是 SELECT *。\n"

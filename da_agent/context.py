@@ -1,64 +1,78 @@
 """上下文构建：把数据字典压成模型能读的"表卡片"。
 
-为什么不给模型一个 describe_table 工具让它自己探：
-1. 表只有 10 张、列不到 70 个，一次性写进系统提示约 1k token，很划算；
-2. 探测要花 2~3 轮工具调用，每轮都是一次完整请求，反而更贵更慢；
-3. 固定内容放在最前面，最容易命中 prompt cache。
+为什么把表结构直接写进系统提示，而不是给模型一个 describe_table 工具：
+1. 一次写进去约 1k token，比让它探 2~3 轮（每轮都是一次完整请求）便宜得多；
+2. 固定内容放在最前面，最容易命中 prompt cache；
+3. 模型第一轮就知道有哪些表、哪些列有坑，不会瞎猜。
 
 原则：**能预先知道的，就不要让模型现场问。**
+
+注意这里已经与具体数据库解耦：入参是 catalog（数据字典），不是某个硬编码的库。
+Olist 的业务知识挪到了工作区的 notes.md 里——那是"数据"，不是"代码"。
 """
 
 from __future__ import annotations
 
-import json
-from pathlib import Path
-
-from .config import CATALOG_PATH
+MAX_TABLES = 40        # 表特别多时截断，避免系统提示失控
+MAX_COLUMNS = 40
 
 RULES = """## 工作规则
 
 1. 只通过 run_sql 取数。所有数字必须来自查询结果，禁止估算、禁止编造。
 2. 一次只验证一个假设：先取最小必要的数据，看到结果再决定下一步。
-3. 时间字段是文本 `YYYY-MM-DD HH:MM:SS`；按月分组用 `strftime('%Y-%m', 列名)`。
-4. 金额是 REAL 类型；汇总后用 `ROUND(x, 2)`。
-5. 可靠分析窗口：2017-01-01 ~ 2018-08-31（2016 年仅 300 余单，2018-09 后只有 20 单）。
+3. **先确认表的粒度**（一行代表什么）再 join。join 后行数明显变多，说明粒度对不上，
+   要去重或先聚合成一张"每个实体一行"的表再连。
+4. 时间列多数存成文本（`YYYY-MM-DD HH:MM:SS`）。先确认格式，再用
+   `strftime('%Y-%m', 列名)` 分组；SQLite 没有 DATE_TRUNC。
+5. 金额/小数汇总后用 `ROUND(x, 2)`。
 6. 问题有口径歧义时，**先说明你的假设再执行**，不要反问用户——你没有追问的机会。
-7. 最终回答用中文，结构为：结论 → 关键数字 → 最后一行写明口径。
-"""
-
-PITFALLS = """## 已知陷阱（踩过，别重踩）
-
-- `orders.customer_id` 是"每单一个号"，不是真实客户。用户维度必须用 `customers.customer_unique_id`。
-- `order_items` 一行 = 一个商品行，不是一单。订单数用 `COUNT(DISTINCT order_id)` 或直接查 `orders`。
-- 地址请用 `geolocation_zip`（每邮编一行）。直接 join 原始 `geolocation` 会让 10 万行变成 1500 万行。
-- `order_delivered_customer_date` 有 3% 空值（取消/未送达），算履约时长要 `WHERE ... IS NOT NULL`。
-- `products` 有 73 个分类，翻译表只有 71 条。分类汇总要 LEFT JOIN 并保留未翻译的。
-- `order_payments` 一单可能有多笔（组合支付），按单汇总要 SUM。
+7. 最终回答用中文：结论 → 关键数字 → 最后一行写明口径。
 """
 
 
-def build_schema_card(catalog_path: Path = CATALOG_PATH) -> str:
-    if not catalog_path.exists():
-        return "（数据字典不存在：请先运行 `python -m da_agent.cli ingest`）"
+def build_schema_card(catalog: dict) -> str:
+    tables = catalog.get("tables", [])
+    if not tables:
+        return "## 数据库结构\n（数据字典为空：这个工作区还没有被分析过）"
 
-    catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
-    lines = [f"## 数据库结构（SQLite，只读，共 {len(catalog['tables'])} 张表）", ""]
-    for table in catalog["tables"]:
-        columns = ", ".join(f"{c['name']} {c['type']}" for c in table["columns"])
-        lines.append(f"### {table['name']}（{table['rows']:,} 行）")
-        lines.append(f"列：{columns}")
+    lines = [f"## 数据库结构（SQLite，只读，共 {len(tables)} 张表）", ""]
+
+    for table in tables[:MAX_TABLES]:
+        columns = table.get("columns", [])
+        rendered = [
+            f"{column['name']} {column.get('type', 'text')}"
+            for column in columns[:MAX_COLUMNS]
+        ]
+        if len(columns) > MAX_COLUMNS:
+            rendered.append(f"…还有 {len(columns) - MAX_COLUMNS} 列")
+
+        lines.append(f"### {table['name']}（{int(table.get('rows', 0)):,} 行）")
+        lines.append("列：" + ", ".join(rendered))
         if table.get("note"):
             lines.append(f"备注：{table['note']}")
         lines.append("")
+
+    if len(tables) > MAX_TABLES:
+        lines.append(f"…还有 {len(tables) - MAX_TABLES} 张表未列出")
+
     return "\n".join(lines)
 
 
-def build_system_prompt(catalog_path: Path = CATALOG_PATH) -> str:
-    return "\n".join([
-        "你是一个数据分析助手，通过查询一个 Olist 巴西电商数据库来回答中文问题。",
-        "",
-        build_schema_card(catalog_path),
-        RULES,
-        PITFALLS,
-        "现在开始。先用 run_sql 确认数据，再下结论。",
-    ])
+def build_system_prompt(catalog: dict, notes: str = "", workspace_name: str = "") -> str:
+    parts = [
+        "你是一个数据分析助手，通过 SQL 查询一个只读的 SQLite 数据库来回答中文问题。",
+    ]
+    if workspace_name:
+        parts.append(f"当前数据集：{workspace_name}")
+
+    parts.append("")
+    parts.append(build_schema_card(catalog))
+    parts.append(RULES)
+
+    if notes:
+        parts.append("## 这个数据集已知的情况（人工整理，优先采信）")
+        parts.append(notes)
+        parts.append("")
+
+    parts.append("现在开始。先用 run_sql 确认数据，再下结论。")
+    return "\n".join(parts)

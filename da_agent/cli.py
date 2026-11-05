@@ -1,9 +1,10 @@
 """命令行入口。
 
-目前只有一条命令 profile（看数据）。
-后面每加一个能力，这里就多一条命令，命令名尽量和 agent 的工具名一致：
-    profile  → 数据画像        run_sql   → 跑 SQL
-    ingest   → 建库            ask       → 提问
+命令分组：
+    profile / ingest   数据准备（CSV → SQLite + 数据字典）
+    ws ...             工作区管理（一个数据库 = 一个工作区）
+    sql / ask          查询与提问
+    serve / config     Web 服务与配置自检
 """
 
 from __future__ import annotations
@@ -22,8 +23,16 @@ from .config import CATALOG_PATH, DATA_DIR, DB_PATH
 from .inspect import profile_all, show, to_json
 
 app = typer.Typer(add_completion=False, no_args_is_help=True, help="数据分析 agent 的命令行入口")
+ws_app = typer.Typer(add_completion=False, no_args_is_help=True,
+                      help="工作区：一个数据库 = 一个工作区")
+app.add_typer(ws_app, name="ws")
+
 console = Console()
 
+
+# --------------------------------------------------------------------------- #
+# 基础
+# --------------------------------------------------------------------------- #
 
 @app.command()
 def version() -> None:
@@ -32,6 +41,40 @@ def version() -> None:
 
     console.print(f"da_agent {__version__}")
 
+
+@app.command()
+def config() -> None:
+    """检查模型配置与当前工作区（不会显示密钥内容）。"""
+    import os
+
+    from .config import PROJECT_ROOT, llm_settings
+    from .workspace import current
+
+    settings = llm_settings()
+    env_file = PROJECT_ROOT / ".env"
+    thinking = os.getenv("DA_LLM_THINKING") or (
+        "disabled（deepseek 自动默认）" if "deepseek" in settings.base_url else "未设置")
+
+    console.print(f"base_url : {settings.base_url}")
+    console.print(f"model    : {settings.model}")
+    if settings.api_key:
+        console.print(f"api_key  : 已设置（{settings.api_key[:3]}…，共 {len(settings.api_key)} 字符）")
+    else:
+        console.print("api_key  : [red]未设置[/red]")
+    console.print(f"thinking : {thinking}")
+    console.print(f".env     : {'已加载' if env_file.exists() else '不存在'}")
+
+    try:
+        ws = current()
+        console.print(f"工作区   : [green]{ws.id}[/green]（{ws.name}，{ws.tables} 张表 / {ws.rows:,} 行）")
+        console.print(f"数据库   : {ws.db}")
+    except Exception as exc:
+        console.print(f"工作区   : [red]{exc}[/red]")
+
+
+# --------------------------------------------------------------------------- #
+# 数据准备
+# --------------------------------------------------------------------------- #
 
 @app.command()
 def profile(
@@ -54,12 +97,118 @@ def profile(
 def ingest(
     db: Path = typer.Option(DB_PATH, "--db", help="输出数据库路径"),
     catalog: Path = typer.Option(CATALOG_PATH, "--catalog", help="输出数据字典路径"),
+    register: bool = typer.Option(True, "--register/--no-register",
+                                  help="建完后同步到工作区 olist"),
 ) -> None:
     """把 data/ 下的 CSV 建成 SQLite 库（每次运行都会重建）。"""
-    from .ingest import build  # 延迟导入：pandas 很重，别拖慢 version 这种命令
+    from .ingest import build
 
-    build(db, catalog)
+    built = build(db, catalog)
 
+    if register and db.resolve() == DB_PATH.resolve():
+        from .workspace import create
+
+        create(DB_PATH, name="Olist 电商", catalog=built, ws_id="olist")
+        console.print("[dim]已同步到工作区 olist（业务笔记 notes.md 不会被覆盖）[/dim]")
+
+
+# --------------------------------------------------------------------------- #
+# 工作区
+# --------------------------------------------------------------------------- #
+
+@ws_app.command("list")
+def ws_list() -> None:
+    """列出所有工作区，● 标记当前激活的那个。"""
+    from .workspace import active_id, list_all, load
+
+    items = list_all()
+    if not items:
+        console.print("还没有工作区。用 `ws add <数据库路径>` 添加一个。")
+        return
+
+    active = active_id()
+    table = RichTable(header_style="bold cyan")
+    for column in ("", "ID", "名称", "表", "行数", "数据库"):
+        table.add_column(column, justify="right" if column in ("表", "行数") else "left")
+
+    for meta in items:
+        workspace = load(meta["id"])
+        mark = "[green]●[/green]" if workspace.id == active else ""
+        table.add_row(mark, workspace.id, workspace.name,
+                      str(workspace.tables), f"{workspace.rows:,}", str(workspace.db))
+    console.print(table)
+
+
+@ws_app.command("add")
+def ws_add(
+    path: Path = typer.Argument(..., help="SQLite 数据库文件路径"),
+    name: str = typer.Option(None, "--name", help="显示名，默认用文件名"),
+    notes: Path = typer.Option(None, "--notes", help="业务笔记 markdown 文件（可选）"),
+    use: bool = typer.Option(True, "--use/--no-use", help="添加后立即切换过去"),
+) -> None:
+    """注册一个新数据库：自动分析结构并存到本地。"""
+    from .workspace import create, set_active
+
+    text = notes.read_text(encoding="utf-8") if notes else ""
+    console.print("[dim]正在分析数据库结构…[/dim]")
+    workspace = create(path, name=name, notes=text)
+    if use:
+        set_active(workspace.id)
+
+    console.print(f"[green]已完成[/green] {workspace.name}（{workspace.id}）："
+                  f"{workspace.tables} 张表，{workspace.rows:,} 行")
+    console.print(f"[dim]数据字典 {workspace.dir / 'catalog.json'}[/dim]")
+    console.print(f"[dim]业务笔记 {workspace.dir / 'notes.md'}（可手工编辑）[/dim]")
+
+
+@ws_app.command("use")
+def ws_use(ws_id: str = typer.Argument(..., help="工作区 ID")) -> None:
+    """切换当前工作区。"""
+    from .workspace import load, set_active
+
+    workspace = load(ws_id)
+    set_active(workspace.id)
+    console.print(f"当前工作区：[green]{workspace.name}[/green]（{workspace.id}）")
+
+
+@ws_app.command("show")
+def ws_show(ws_id: str = typer.Argument(None, help="工作区 ID，默认当前")) -> None:
+    """查看某个工作区的数据字典和业务笔记。"""
+    from .workspace import current, load
+
+    workspace = load(ws_id) if ws_id else current()
+    console.print(f"[bold]{workspace.name}[/bold]  [dim]({workspace.id})[/dim]")
+    console.print(f"[dim]{workspace.db}[/dim]\n")
+
+    table = RichTable(header_style="bold cyan")
+    table.add_column("表")
+    table.add_column("行数", justify="right")
+    table.add_column("列", justify="right")
+    table.add_column("备注")
+    for entry in workspace.catalog.get("tables", []):
+        table.add_row(entry["name"], f"{int(entry.get('rows', 0)):,}",
+                      str(len(entry.get("columns", []))), entry.get("note", ""))
+    console.print(table)
+
+    if workspace.notes:
+        console.print(Panel(workspace.notes, title="业务笔记 notes.md", border_style="dim"))
+
+
+@ws_app.command("refresh")
+def ws_refresh(ws_id: str = typer.Argument(None, help="工作区 ID，默认当前")) -> None:
+    """重新分析数据库结构（数据变了之后用）。notes.md 不会被覆盖。"""
+    from .workspace import create, current, load
+
+    workspace = load(ws_id) if ws_id else current()
+    console.print("[dim]重新分析中…[/dim]")
+    refreshed = create(workspace.db, name=workspace.name, ws_id=workspace.id)
+    console.print(f"[green]已刷新[/green] {refreshed.name}：{refreshed.tables} 张表，"
+                  f"{refreshed.rows:,} 行")
+
+
+# --------------------------------------------------------------------------- #
+# 查询与提问
+# --------------------------------------------------------------------------- #
 
 @app.command()
 def sql(
@@ -67,11 +216,14 @@ def sql(
     limit: int = typer.Option(50, "--limit", "-n", help="最多返回多少行"),
     timeout: float = typer.Option(30.0, "--timeout", help="超时秒数"),
     as_json: bool = typer.Option(False, "--json", help="按 JSON 输出（和前端/模型看到的一致）"),
+    ws: str | None = typer.Option(None, "--ws", help="工作区 ID，默认当前"),
 ) -> None:
     """在只读连接上执行一条 SELECT，看到 agent 将来看到的那份结果。"""
     from .db import run_query, summary_line
+    from .workspace import current, load
 
-    result = run_query(query, limit=limit, timeout=timeout)
+    workspace = load(ws) if ws else current()
+    result = run_query(query, limit=limit, timeout=timeout, path=workspace.db)
 
     if as_json:
         console.print_json(json.dumps(asdict(result), ensure_ascii=False, default=str))
@@ -92,33 +244,10 @@ def sql(
     console.print(f"[dim]{summary_line(result)}[/dim]")
 
 
-@app.command()
-def config() -> None:
-    """检查模型配置是否就绪（不会显示密钥内容）。"""
-    import os
-
-    from .config import PROJECT_ROOT, llm_settings
-
-    settings = llm_settings()
-    env_file = PROJECT_ROOT / ".env"
-    thinking = os.getenv("DA_LLM_THINKING") or (
-        "disabled（deepseek 自动默认）" if "deepseek" in settings.base_url else "未设置")
-
-    console.print(f"base_url : {settings.base_url}")
-    console.print(f"model    : {settings.model}")
-    if settings.api_key:
-        console.print(f"api_key  : 已设置（{settings.api_key[:3]}…，共 {len(settings.api_key)} 字符）")
-    else:
-        console.print("api_key  : [red]未设置[/red]")
-    console.print(f"thinking : {thinking}")
-    console.print(f".env     : {'已加载' if env_file.exists() else '不存在'}")
-    console.print(f"端点     : {settings.base_url.rstrip('/')}/chat/completions")
-
-
 def _render(event: dict) -> None:
     """把事件渲染成人能读的样子。
 
-    Web 前端将来渲染的是同一批事件——所以这里只做"展示"，不做任何业务判断。
+    Web 前端渲染的是同一批事件——所以这里只做"展示"，不做任何业务判断。
     """
     kind = event.get("type")
 
@@ -127,10 +256,10 @@ def _render(event: dict) -> None:
 
     elif kind == "tool_call":
         args = event.get("args")
-        sql = args.get("sql") if isinstance(args, dict) else args
+        sql_text = args.get("sql") if isinstance(args, dict) else args
         console.print(f"[cyan]→ {event['name']}[/cyan] [dim]step {event.get('step')}[/dim]")
-        if sql:
-            console.print(Panel(str(sql).strip(), border_style="cyan", padding=(0, 1)))
+        if sql_text:
+            console.print(Panel(str(sql_text).strip(), border_style="cyan", padding=(0, 1)))
 
     elif kind == "tool_result":
         result = event.get("result") or {}
@@ -176,27 +305,39 @@ def ask(
     max_steps: int = typer.Option(8, "--max-steps", help="最多几轮工具调用"),
     fake: bool = typer.Option(False, "--fake", help="离线演示：不调模型，用脚本客户端验证循环"),
     trace: bool = typer.Option(True, "--trace/--no-trace", help="把事件流写成 JSONL 便于复盘"),
+    ws: str | None = typer.Option(None, "--ws", help="工作区 ID，默认当前"),
 ) -> None:
     """问一个问题，看 agent 一步步怎么查出来。"""
-    from datetime import datetime
-
-    from .config import TRACES_DIR
     from .llm import EchoClient
     from .loop import ApiClient, run
+    from .trace import write_trace
+    from .workspace import current, load
 
-    console.rule(f"[bold]{question}[/bold]")
+    workspace = load(ws) if ws else current()
+    console.rule(f"[bold]{question}[/bold] [dim]· {workspace.name}[/dim]")
     client = EchoClient() if fake else ApiClient()
 
-    records: list[str] = []
-    for event in run(question, client=client, max_steps=max_steps):
-        records.append(json.dumps(event, ensure_ascii=False, default=str))
+    records: list[dict] = []
+    for event in run(question, client=client, max_steps=max_steps, workspace=workspace):
+        records.append(event)
         _render(event)
 
     if trace:
-        TRACES_DIR.mkdir(parents=True, exist_ok=True)
-        path = TRACES_DIR / f"{datetime.now():%Y%m%d-%H%M%S}.jsonl"
-        path.write_text("\n".join(records), encoding="utf-8")
-        console.print(f"\n[dim]事件流已保存：{path}[/dim]")
+        path = write_trace(records)
+        if path:
+            console.print(f"\n[dim]事件流已保存：{path}[/dim]")
+
+
+@app.command()
+def serve(
+    host: str = typer.Option("127.0.0.1", "--host", help="绑定地址"),
+    port: int = typer.Option(8123, "--port", help="端口"),
+) -> None:
+    """启动 Web 界面。"""
+    import uvicorn
+
+    console.print(f"[bold]打开 http://{host}:{port}[/bold]  （Ctrl+C 停止）")
+    uvicorn.run("da_agent.server:app", host=host, port=port, log_level="warning")
 
 
 def main() -> None:

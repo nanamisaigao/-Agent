@@ -1,0 +1,7 @@
+- `orders.customer_id` 是"每单一个号"，不是真实客户。用户维度必须用 `customers.customer_unique_id`。
+- `order_items` 一行 = 一个商品行，不是一单。订单数用 `COUNT(DISTINCT order_id)` 或直接查 `orders`。
+- 地址请用 `geolocation_zip`（每邮编一行）。直接 join 原始 `geolocation` 会让 10 万行变成 1500 万行。
+- `order_delivered_customer_date` 有 3% 空值（取消/未送达），算履约时长要 `WHERE ... IS NOT NULL`。
+- `products` 有 73 个分类，翻译表只有 71 条。分类汇总要 LEFT JOIN 并保留未翻译的。
+- `order_payments` 一单可能有多笔（组合支付），按单汇总要 SUM。
+- 可靠分析窗口：2017-01-01 ~ 2018-08-31（2016 年仅 300 余单，2018-09 后只有 20 单）。

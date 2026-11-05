@@ -29,6 +29,7 @@ from typing import Iterator, Protocol
 
 from .context import build_system_prompt
 from .llm import LLMError, LLMReply, chat
+from .tools import ToolContext
 from .tools import call as call_tool
 from .tools import schemas
 
@@ -77,19 +78,30 @@ def _parse_arguments(raw: str) -> dict | str:
 
 
 def run(question: str, client: ChatClient | None = None,
-        max_steps: int = 8, system_prompt: str | None = None) -> Iterator[dict]:
+        max_steps: int = 8, workspace=None,
+        system_prompt: str | None = None) -> Iterator[dict]:
     """执行一次问答，逐个 yield 事件。
 
     事件类型：run_start / text / tool_call / tool_result / answer / run_end / error
+
+    workspace 决定"查哪个库、用哪份数据字典、带哪些业务笔记"。
+    不传就用当前激活的工作区，方便命令行直接跑。
     """
+    from .workspace import current
+
+    ws = workspace or current()
+    ctx = ToolContext(db_path=ws.db, workspace_id=ws.id)
+
     client = client or ApiClient()
     messages: list[dict] = [
-        {"role": "system", "content": system_prompt or build_system_prompt()},
+        {"role": "system",
+         "content": system_prompt or build_system_prompt(ws.catalog, ws.notes, ws.name)},
         {"role": "user", "content": question},
     ]
     usage = {"prompt_tokens": 0, "completion_tokens": 0}
 
-    yield {"type": "run_start", "question": question}
+    yield {"type": "run_start", "question": question,
+           "workspace": ws.id, "workspace_name": ws.name}
 
     for step in range(1, max_steps + 1):
         try:
@@ -121,7 +133,7 @@ def run(question: str, client: ChatClient | None = None,
             yield {"type": "tool_call", "id": call["id"],
                    "name": call["name"], "args": arguments, "step": step}
 
-            result = call_tool(call["name"], call["arguments"])
+            result = call_tool(call["name"], call["arguments"], ctx)
 
             yield {"type": "tool_result", "id": call["id"], "name": call["name"],
                    "result": result, "step": step}
