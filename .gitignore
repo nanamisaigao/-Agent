@@ -2,6 +2,10 @@
 __pycache__/
 *.pyc
 .idea/
-*.db
-data/
 
+# 数据与衍生文件：体积大、可重建，不进仓库
+data/
+artifacts/
+
+# pip / 工具临时目录
+.tmp/
