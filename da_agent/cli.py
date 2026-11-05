@@ -92,6 +92,29 @@ def sql(
     console.print(f"[dim]{summary_line(result)}[/dim]")
 
 
+@app.command()
+def config() -> None:
+    """检查模型配置是否就绪（不会显示密钥内容）。"""
+    import os
+
+    from .config import PROJECT_ROOT, llm_settings
+
+    settings = llm_settings()
+    env_file = PROJECT_ROOT / ".env"
+    thinking = os.getenv("DA_LLM_THINKING") or (
+        "disabled（deepseek 自动默认）" if "deepseek" in settings.base_url else "未设置")
+
+    console.print(f"base_url : {settings.base_url}")
+    console.print(f"model    : {settings.model}")
+    if settings.api_key:
+        console.print(f"api_key  : 已设置（{settings.api_key[:3]}…，共 {len(settings.api_key)} 字符）")
+    else:
+        console.print("api_key  : [red]未设置[/red]")
+    console.print(f"thinking : {thinking}")
+    console.print(f".env     : {'已加载' if env_file.exists() else '不存在'}")
+    console.print(f"端点     : {settings.base_url.rstrip('/')}/chat/completions")
+
+
 def _render(event: dict) -> None:
     """把事件渲染成人能读的样子。
 

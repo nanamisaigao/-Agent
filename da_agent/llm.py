@@ -19,8 +19,7 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
 
-from .config import PROJECT_ROOT, llm_settings
-from .env import load_dotenv
+from .config import llm_settings
 
 
 class LLMError(RuntimeError):
@@ -33,6 +32,7 @@ class LLMReply:
     tool_calls: list[dict] = field(default_factory=list)   # [{"id","name","arguments"}]
     usage: dict = field(default_factory=dict)             # prompt/completion/total tokens
     finish_reason: str | None = None
+    reasoning: str | None = None                          # 思维链（DeepSeek 的 reasoning_content）
 
 
 def _parse(data: dict) -> LLMReply:
@@ -56,13 +56,13 @@ def _parse(data: dict) -> LLMReply:
         tool_calls=calls,
         usage=data.get("usage") or {},
         finish_reason=choice.get("finish_reason"),
+        reasoning=message.get("reasoning_content"),
     )
 
 
 def chat(messages: list[dict], tools: list[dict] | None = None,
          attempts: int = 3) -> LLMReply:
     """调用 /chat/completions。429 / 5xx / 网络错误会退避重试。"""
-    load_dotenv(PROJECT_ROOT / ".env")
     settings = llm_settings()
 
     if not settings.api_key:
@@ -75,6 +75,17 @@ def chat(messages: list[dict], tools: list[dict] | None = None,
 
     url = settings.base_url.rstrip("/") + "/chat/completions"
     payload: dict = {"model": settings.model, "messages": messages, "temperature": 0}
+
+    # DeepSeek 默认开启"思考模式"，会多返回一个 reasoning_content，
+    # 而且带 tools 的请求必须把历史 reasoning_content 原样回传，否则 400。
+    # 对工具调用类任务，思考模式既慢又贵，默认关掉。
+    # 注意：这个字段不是 OpenAI 标准的，所以只在明确需要时才发出去。
+    thinking = os.getenv("DA_LLM_THINKING")
+    if thinking is None and "deepseek" in settings.base_url:
+        thinking = "disabled"
+    if thinking in ("enabled", "disabled"):
+        payload["thinking"] = {"type": thinking}
+
     if tools:
         payload["tools"] = tools
         payload["tool_choice"] = "auto"

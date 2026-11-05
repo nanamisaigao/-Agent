@@ -11,6 +11,8 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+from .env import load_dotenv
+
 # __file__ = <项目根>/da_agent/config.py，parents[1] 就是项目根
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
@@ -39,6 +41,7 @@ def llm_settings() -> LLMSettings:
     变量名优先用项目自己的 DA_*，其次兼容 OpenAI 的标准名——
     这样你在别处已经配好的 OPENAI_API_KEY 可以直接复用。
     """
+    load_dotenv(PROJECT_ROOT / ".env")
     return LLMSettings(
         base_url=(os.getenv("DA_LLM_BASE_URL") or os.getenv("OPENAI_BASE_URL")
                   or "https://api.openai.com/v1"),

@@ -52,6 +52,10 @@ def _assistant_message(reply: LLMReply) -> dict:
     工具调用必须按 OpenAI 的格式回填，否则下一轮请求会被服务端拒绝。
     """
     message: dict = {"role": "assistant", "content": reply.content or ""}
+    # DeepSeek 在思考模式下要求把 reasoning_content 原样带回去，否则下一轮 400。
+    # 关掉思考模式时这里是 None，不会出现在请求里。
+    if reply.reasoning:
+        message["reasoning_content"] = reply.reasoning
     if reply.tool_calls:
         message["tool_calls"] = [
             {
