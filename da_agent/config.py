@@ -7,6 +7,8 @@
 
 from __future__ import annotations
 
+import os
+from dataclasses import dataclass
 from pathlib import Path
 
 # __file__ = <项目根>/da_agent/config.py，parents[1] 就是项目根
@@ -16,9 +18,34 @@ DATA_DIR = PROJECT_ROOT / "data"          # 原始 CSV（只读，不要改）
 DB_PATH = DATA_DIR / "olist.db"           # 由 CSV 生成的 SQLite 库（衍生品，可重建）
 CATALOG_PATH = DATA_DIR / "olist.catalog.json"  # 数据字典（衍生品）
 ARTIFACTS_DIR = PROJECT_ROOT / "artifacts"  # 图、导出结果、报告（后面才用）
+TRACES_DIR = ARTIFACTS_DIR / "traces"       # 每次问答的事件流与完整上下文（JSONL）
 
 # 所有表共用的读取参数：Olist 的 CSV 带 BOM 和引号，这一组参数能通吃
 CSV_ENCODING = "utf-8-sig"
+
+
+@dataclass
+class LLMSettings:
+    base_url: str
+    api_key: str
+    model: str
+    timeout: float
+
+
+def llm_settings() -> LLMSettings:
+    """每次调用时现读环境变量。
+
+    不在 import 时读死：这样 .env 在之后加载也能生效，测试也好改。
+    变量名优先用项目自己的 DA_*，其次兼容 OpenAI 的标准名——
+    这样你在别处已经配好的 OPENAI_API_KEY 可以直接复用。
+    """
+    return LLMSettings(
+        base_url=(os.getenv("DA_LLM_BASE_URL") or os.getenv("OPENAI_BASE_URL")
+                  or "https://api.openai.com/v1"),
+        api_key=(os.getenv("DA_LLM_API_KEY") or os.getenv("OPENAI_API_KEY") or ""),
+        model=(os.getenv("DA_LLM_MODEL") or os.getenv("OPENAI_MODEL") or "gpt-4o-mini"),
+        timeout=float(os.getenv("DA_LLM_TIMEOUT", "120")),
+    )
 
 
 def ensure_dirs() -> None:
