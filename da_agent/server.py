@@ -29,7 +29,7 @@ from .config import ARTIFACTS_DIR, PROJECT_ROOT
 from .llm import EchoClient
 from .loop import ApiClient, run
 from .trace import write_trace
-from .workspace import create, current, list_all, load, set_active
+from .workspace import create, current, list_all, load, set_active, suggest_questions
 
 WEB_DIR = PROJECT_ROOT / "web"
 
@@ -151,6 +151,9 @@ def workspaces() -> dict:
             "tables": workspace.tables,
             "rows": workspace.rows,
             "db": str(workspace.db),
+            # 老工作区的字典里可能没有 suggestions，这里补算一次（很便宜）
+            "suggestions": (workspace.catalog.get("suggestions")
+                            or suggest_questions(workspace.catalog)),
         })
     try:
         active = current().id

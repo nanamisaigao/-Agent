@@ -78,6 +78,59 @@ def slugify(name: str) -> str:
     return slug or "workspace"
 
 
+def suggest_questions(catalog: dict, limit: int = 3) -> list[str]:
+    """从数据字典里推几个入手问题。
+
+    为什么要自动生成：界面上的示例问题如果写死，换个库就变成笑话
+    （在销售库里提示"哪个州的订单最多"）。这里只用结构信息，不调模型，
+    所以免费、离线可用、加库时不依赖 API key。
+
+    挑选顺序看重"能不能问出东西"：有时间列和低基数列的表更有分析价值，
+    纯坐标表（如 geolocation）排在后面。
+    """
+    def score(table: dict) -> tuple:
+        columns = table.get("columns", [])
+        has_time = any(normalize_type(c.get("type")) == "datetime" for c in columns)
+        has_category = any(normalize_type(c.get("type")) == "text"
+                           and 1 < (c.get("distinct") or 0) <= 40 for c in columns)
+        return (has_time, has_category, int(table.get("rows") or 0))
+
+    tables = [t for t in catalog.get("tables", []) if int(t.get("rows") or 0) > 0]
+    tables.sort(key=score, reverse=True)
+
+    questions: list[str] = []
+    for table in tables:
+        columns = table.get("columns", [])
+        name = table["name"]
+
+        time_col = next((c["name"] for c in columns
+                         if normalize_type(c.get("type")) == "datetime"), None)
+        category = next((c["name"] for c in columns
+                         if normalize_type(c.get("type")) == "text"
+                         and 1 < (c.get("distinct") or 0) <= 40), None)
+        numeric = next((c["name"] for c in columns
+                        if normalize_type(c.get("type")) in ("int", "float")
+                        and not str(c["name"]).lower().endswith("id")
+                        and (c.get("distinct") or 0) > 10), None)
+
+        if category:
+            questions.append(f"{name} 里各 {category} 分别有多少条？")
+        elif time_col:
+            questions.append(f"{name} 按月的数据量怎么变化？")
+        else:
+            questions.append(f"{name} 一共有多少行数据？")
+
+        if numeric and len(questions) < limit:
+            questions.append(f"{name} 的 {numeric} 平均值是多少？")
+        if time_col and len(questions) < limit:
+            questions.append(f"{name} 的时间范围是从什么时候到什么时候？")
+
+        if len(questions) >= limit:
+            break
+
+    return questions[:limit]
+
+
 def _rel(path: Path) -> str:
     """项目内的路径存相对路径，方便整个目录搬走。"""
     try:
@@ -95,18 +148,30 @@ def _abs(stored: str) -> Path:
 # 画像：把任意一个 SQLite 库变成数据字典
 # --------------------------------------------------------------------------- #
 
-def _infer_kind(declared: str, samples: list) -> str:
-    decl = (declared or "").upper()
-    if "INT" in decl:
+def normalize_type(value: str) -> str:
+    """把各种写法归一成四种：text / int / float / datetime。
+
+    SQLite 的声明类型五花八门（TEXT、INTEGER、VARCHAR(20)、REAL…），
+    早期建库脚本写的是大写声明类型，后来画像写的是小写语义类型，
+    两边不一致会让"按类型挑问题"这类逻辑失效。
+    """
+    text = str(value or "").strip().lower()
+    if "int" in text:
         return "int"
-    if any(k in decl for k in ("REAL", "FLOA", "DOUB", "NUM", "DEC")):
+    if any(key in text for key in ("real", "floa", "doub", "num", "dec")):
         return "float"
-    if "DATE" in decl or "TIME" in decl:
-        return "datetime"
-    # 声明成 TEXT 的，可能是 ISO 时间字符串
-    if samples and all(_ISO.match(str(s)) for s in samples):
+    if "date" in text or "time" in text:
         return "datetime"
     return "text"
+
+
+def infer_kind(declared: str, samples: list) -> str:
+    """在声明类型的基础上，用样本值再补一刀（TEXT 里可能存的是 ISO 时间）。"""
+    kind = normalize_type(declared)
+    values = [s for s in samples if s is not None]
+    if kind == "text" and values and all(_ISO.match(str(s)) for s in values):
+        return "datetime"
+    return kind
 
 
 def profile_db(db_path: Path, distinct_limit: int = 200_000) -> dict:
@@ -156,7 +221,7 @@ def profile_db(db_path: Path, distinct_limit: int = 200_000) -> dict:
                         f"WHERE {_quote(col)} IS NOT NULL LIMIT 3"
                     )
                 ]
-                kind = _infer_kind(ctype, samples)
+                kind = infer_kind(ctype, samples)
 
                 note = ""
                 if distinct is not None and rows and distinct == rows and nulls == 0 and rows > 1:
@@ -221,6 +286,8 @@ def create(db_path: Path, name: str | None = None, notes: str = "",
     folder.mkdir(parents=True, exist_ok=True)
 
     catalog = catalog or profile_db(db_path)
+    # 入手问题跟着字典一起存下来，界面上直接展示
+    catalog.setdefault("suggestions", suggest_questions(catalog))
     (folder / "catalog.json").write_text(
         json.dumps(catalog, ensure_ascii=False, indent=2), encoding="utf-8", newline="\n")
 
@@ -253,6 +320,10 @@ def load(ws_id: str) -> Workspace:
         json.loads(catalog_path.read_text(encoding="utf-8"))
         if catalog_path.exists() else {"tables": []}
     )
+    # 老字典可能是大写声明类型，读的时候统一一次
+    for table in catalog.get("tables", []):
+        for column in table.get("columns", []):
+            column["type"] = normalize_type(column.get("type", "text"))
     notes_path = folder / "notes.md"
     notes = notes_path.read_text(encoding="utf-8") if notes_path.exists() else ""
 

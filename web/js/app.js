@@ -37,16 +37,30 @@ const statusEl = $('status');
 const FAKE_MODE = new URLSearchParams(location.search).get('fake') === '1';
 const DEMO_MODE = new URLSearchParams(location.search).get('demo') === '1';
 
-const EMPTY_HTML = `
+/** 空状态里的示例问题来自当前工作区的数据字典，不是写死的 */
+function emptyHtml() {
+  const workspace = state.workspaces.find((w) => w.id === state.activeWs);
+  const suggestions = (workspace && workspace.suggestions) || [];
+  const items = suggestions.length
+    ? suggestions.map((q) => `<li>${esc(q)}</li>`).join('')
+    : '<li>从左侧的表开始，或者直接描述你想看什么</li>';
+
+  return `
   <div class="empty" id="empty">
     <p>问点什么试试</p>
-    <ul>
-      <li>2017 年哪个州的订单数最多？</li>
-      <li>各月的平均客单价是多少？</li>
-      <li>差评率最高的商品类目是哪些？</li>
-    </ul>
+    <ul>${items}</ul>
     <p class="tip">每一步的 SQL 和查询结果都会展开给你看</p>
   </div>`;
+}
+
+function clearLog() {
+  logEl.innerHTML = emptyHtml();
+}
+
+/** 工作区数据加载完之后，如果还停在空状态就重画一次 */
+function refreshEmpty() {
+  if ($('empty')) clearLog();
+}
 
 function formatRows(n) {
   if (!n) return '0';
@@ -84,10 +98,6 @@ function autosize() {
 
 function scrollToBottom() {
   logEl.scrollTop = logEl.scrollHeight;
-}
-
-function clearLog() {
-  logEl.innerHTML = EMPTY_HTML;
 }
 
 function append(className, html) {
@@ -768,6 +778,7 @@ async function boot() {
   clearLog();
   try {
     await loadWorkspaces();
+    refreshEmpty();          // 工作区数据到了才知道该推荐什么问题
     await loadModels();
     await loadTables();
     await loadSessions();

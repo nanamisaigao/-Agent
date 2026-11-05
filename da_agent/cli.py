@@ -207,6 +207,14 @@ def ws_show(ws_id: str = typer.Argument(None, help="工作区 ID，默认当前"
                       str(len(entry.get("columns", []))), entry.get("note", ""))
     console.print(table)
 
+    from .workspace import suggest_questions
+
+    suggestions = workspace.catalog.get("suggestions") or suggest_questions(workspace.catalog)
+    if suggestions:
+        console.print("\n[dim]可以这样问：[/dim]")
+        for question in suggestions:
+            console.print(f"  [cyan]·[/cyan] {question}")
+
     if workspace.notes:
         console.print(Panel(workspace.notes, title="业务笔记 notes.md", border_style="dim"))
 

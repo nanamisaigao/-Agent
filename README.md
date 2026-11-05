@@ -33,13 +33,20 @@ macOS / Linux 把第二行换成 `source .venv/bin/activate`。
 
 ### 2. 准备数据
 
-项目自带 Olist 巴西电商数据（9 个 CSV）。建库：
+**仓库里不含数据**：`data/`、`workspaces/*/catalog.json`、`artifacts/` 都在 `.gitignore` 里
+（原始 CSV 约 120 MB，建好的库 168 MB，不适合进版本库）。
+
+本项目是在 **Olist 巴西电商公开数据集** 上开发的。想复现示例，先去 Kaggle 下载
+（[Brazilian E-Commerce Public Dataset](https://www.kaggle.com/datasets/olistbr/brazilian-ecommerce)），
+把 9 个 CSV 解压到 `data/`，然后建库：
 
 ```powershell
 python -m da_agent.cli ingest
 ```
 
-约 15 秒，产出 `data/olist.db`（168 MB，10 张表 156 万行）和数据字典。
+约 15 秒，产出 `data/olist.db`（10 张表 / 156 万行）和一份数据字典。
+
+**不想用 Olist 也没关系**：跳过这步，直接接你自己的 SQLite 库，见下一节。
 
 ### 3. 配置模型
 
@@ -95,6 +102,8 @@ python -m da_agent.cli ws add D:\data\mydb.db --name "我的业务库"
 1. 开只读连接扫出所有表和视图
 2. 逐列统计类型、行数、空值率、唯一值、样本值
 3. 把结果写进 `workspaces/<id>/`，并自动切过去
+
+接入后，对话页的示例问题会按这个库的结构**自动生成**（取时间列、分类列、数值列拼出来），不会再出现"哪个州订单最多"这种跟你的库完全不搭的提示。
 
 ```
 workspaces/

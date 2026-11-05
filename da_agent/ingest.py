@@ -30,6 +30,7 @@ from rich.table import Table as RichTable
 
 from .config import CATALOG_PATH, CSV_ENCODING, DATA_DIR, DB_PATH, ensure_dirs
 from .schema import DERIVED_TABLES, RELATIONSHIPS, TABLES, Table, sql_type
+from .workspace import infer_kind
 
 console = Console()
 
@@ -188,9 +189,13 @@ def build_catalog(conn: sqlite3.Connection) -> dict:
         for _, col, ctype, notnull, _, _pk in info:
             nulls = conn.execute(f"SELECT COUNT(*) FROM {name} WHERE {col} IS NULL").fetchone()[0]
             distinct = conn.execute(f"SELECT COUNT(DISTINCT {col}) FROM {name}").fetchone()[0]
+            # 声明类型只是线索：TEXT 里也可能存着 ISO 时间
+            samples = [r[0] for r in conn.execute(
+                f'SELECT "{col}" FROM "{name}" WHERE "{col}" IS NOT NULL LIMIT 3')]
             columns.append({
                 "name": col,
-                "type": ctype,
+                "type": infer_kind(ctype, samples),
+                "declared": ctype,
                 "notnull": bool(notnull),
                 "null_pct": round(nulls / rows * 100, 2) if rows else 0.0,
                 "distinct": distinct,
