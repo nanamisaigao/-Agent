@@ -1,8 +1,18 @@
 # da_agent
 
-一个可以接**任意 SQLite 数据库**的数据分析 agent：你用中文提问，它自己写 SQL、查库、看结果、再决定下一步，最后给结论——每一步的 SQL 和查询结果都摊开在你面前。
+一个可以接**任意 SQLite 数据库**的数据分析 agent：你用中文提问，它自己写 SQL、查库、看结果、再决定下一步，最后给结论——每一步的 SQL / Python 和查询结果都摊开在你面前。
 
 ![界面截图](docs/images/screenshot.png)
+
+> [!IMPORTANT]
+> **仓库里不含数据。**
+> `data/`、`artifacts/`、`config/`、`workspaces/*/catalog.json`、`workspaces/*/sessions/` 都在 `.gitignore` 里
+> （原始 CSV 约 120 MB，建好的库 168 MB）。
+>
+> clone 下来直接双击 `start.bat` 能启动，但**没有工作区**，你得先给它一个数据库：
+> 按 [准备数据](#2-准备数据) 下载 Olist 样本，或者把自己的 `.db` 拖进来（见 [接入你自己的数据库](#接入你自己的数据库)）。
+
+**快速跳转**：[快速开始](#快速开始) · [接入自己的库](#接入你自己的数据库) · [命令速查](#命令速查) · [工作原理](#它是怎么工作的) · [多轮对话](#多轮对话与上下文) · [设计取舍](#几个设计选择) · [已知限制](#已知限制)
 
 ---
 
@@ -15,6 +25,8 @@
 - **可以换模型**：网页里切换任意 OpenAI 兼容服务（DeepSeek / OpenAI / 本地 Ollama …）
 - **只读安全**：查询只走只读连接，只允许单条 `SELECT`，有超时中断
 - **过程透明**：每一步的 SQL / Python、返回行数、耗时都能看到，状态栏实时显示"第几步、跑了多久"
+
+**它不是什么**：不是 BI 平台，不是自动报表工具，也没有多用户和权限体系。它是一个本地单机、用来"把一次数据分析做给人看"的工具。
 
 ---
 
@@ -152,18 +164,22 @@ workspaces/
 
 | 命令 | 作用 |
 |---|---|
+| `bootstrap.py [--no-serve] [--port N]` | 一键装依赖并启动（`start.bat` / `start.sh` 就是调它） |
 | `profile [-d]` | 扫描 CSV，看行数/类型/空值率 |
 | `ingest` | CSV → SQLite，并同步工作区 |
 | `ws list` | 列出工作区（`●` 是当前） |
 | `ws add <路径> [--name]` | 接入新数据库并自动分析 |
 | `ws use <id>` | 切换工作区 |
-| `ws show [id]` | 看表清单和业务笔记 |
+| `ws show [id]` | 看表清单、业务笔记、自动生成的示例问题 |
 | `ws refresh [id]` | 数据结构变了之后重新分析 |
 | `sql "<查询>" [--ws id]` | 手动跑一条只读 SQL |
 | `ask "<问题>" [--ws id] [--session id]` | 提问，看完整过程（带 `--session` 继续上次） |
-| `serve [--port]` | 启动网页 |
+| `serve [--port] [--host]` | 启动网页 |
 | `model list / add / use` | 管理模型配置 |
-| `config` | 检查模型与工作区状态 |
+| `config` | 检查模型、工作区、密钥状态 |
+
+> 命令都要用虚拟环境里的解释器：Windows 是 `.venv\Scripts\python -m da_agent.cli ...`，
+> macOS/Linux 是 `.venv/bin/python -m da_agent.cli ...`。激活过 venv 的话直接 `python -m da_agent.cli` 也行。
 
 网页里的调试开关：
 
@@ -203,9 +219,11 @@ workspaces/
 `run_python` 里预置了 `pd` / `np` / `plt`，还有 `query(sql)` 直接拿 DataFrame。
 画完不用 `plt.show()`：脚本结束时所有开着的图会自动存到 `artifacts/<工作区>/runs/` 并显示在对话里。
 
+![生成图表的对话](docs/images/chart.png)
+
 核心是**一个内核，多个前端**：`loop.run()` 只负责推理并吐出事件，CLI 和浏览器各自渲染同一批事件。加一个新界面不需要改任何业务逻辑。
 
-事件类型：`run_start` / `text` / `tool_call` / `tool_result` / `answer` / `run_end` / `error`。
+事件类型：`context` / `run_start` / `step` / `text` / `tool_call` / `tool_result` / `answer` / `run_end` / `error`。
 
 一次问答的上下文长这样（`artifacts/traces/*.jsonl` 里存的就是完整版）：
 
@@ -242,6 +260,10 @@ assistant  结论……
 ## 目录结构
 
 ```
+bootstrap.py     一键安装依赖并启动
+start.bat        Windows 双击入口
+start.sh         macOS / Linux 入口
+
 da_agent/
   config.py      路径与配置（唯一知道"文件在哪"的地方）
   workspace.py   工作区：目录结构、数据库画像
@@ -266,9 +288,9 @@ web/             前端（原生 ES module，无构建步骤）
   js/markdown.js 纯函数：迷你 markdown 渲染
 
 data/            原始 CSV 与建好的库（gitignored）
-workspaces/      每个数据库一份：元数据 + 字典 + 笔记
-artifacts/       traces、截图（gitignored）
-docs/            方案文档、截图
+workspaces/      每个数据库一份：元数据 + 字典 + 笔记 + 会话（多数 gitignored）
+artifacts/       traces、Python 产物、截图（gitignored）
+docs/            方案文档、README 用的截图
 ```
 
 ---
@@ -310,8 +332,12 @@ docs/            方案文档、截图
 
 - [x] 多轮会话（追问、上下文压缩）
 - [x] 图表工具（`run_python` + matplotlib，图直接显示在对话里）
-- [ ] 会话历史与回放
+- [x] 会话历史与回放（侧栏列表 + `?session=` 深链）
+- [x] 工作区侧栏、模型切换、一键安装
+- [ ] 导出报告（结论 + 图表 + SQL 打包成 markdown）
+- [ ] 产物面板（右侧集中展示一次会话生成的所有图）
 - [ ] 更多数据源（CSV / Parquet / Postgres）
+- [ ] 产物自动清理（现在 `artifacts/<工作区>/runs/` 会一直累积）
 
 ---
 

@@ -968,17 +968,62 @@ const DEMO_EVENTS = [
   },
   {
     type: 'answer',
-    text: '**结论**：2017 年订单数最多的是 SP（圣保罗州），17,760 单。\n\n'
+    text: '**结论**：2017 年订单数最多的是 SP（圣保罗州），17,760 单，约占全年的 40%。\n\n'
         + '| 排名 | 州 | 订单数 |\n|---|---|---|\n'
-        + '| 1 | SP | 17,760 |\n| 2 | RJ | 6,225 |\n| 3 | MG | 5,414 |\n\n'
-        + 'SP 约占全部订单的 40%，是第二名 RJ 的 2.85 倍。\n\n'
-        + '口径：订单数 = COUNT(DISTINCT order_id)，州取客户所在州。',
+        + '| 1 | SP | 17,760 |\n| 2 | RJ | 6,225 |\n| 3 | MG | 5,414 |\n'
+        + '| 4 | RS | 2,661 |\n| 5 | PR | 2,270 |\n\n'
+        + 'SP 是第二名 RJ 的 2.85 倍，头部集中度很高；前十名里 SP / RJ / MG 三个州合计占了六成以上。\n\n'
+        + '口径：订单数 = COUNT(DISTINCT order_id)，按下单时间落在 2017 全年筛选，州取客户所在州，未过滤订单状态。',
   },
   { type: 'run_end', ok: true, steps: 2, usage: { prompt_tokens: 3563, completion_tokens: 348 } },
 ];
 
+/** 演示模式的数据：不请求后端，页面也能完整展示 */
+function seedDemo() {
+  state.workspaces = [{
+    id: 'demo',
+    name: 'Olist 电商',
+    tables: 10,
+    rows: 1569937,
+    db: 'data/olist.db',
+    suggestions: ['orders 里各 order_status 分别有多少条？', 'orders 的时间范围是从什么时候到什么时候？'],
+  }];
+  state.activeWs = 'demo';
+  state.tables = [
+    { name: 'customers', rows: 99441 }, { name: 'geolocation', rows: 1000163 },
+    { name: 'order_items', rows: 112650 }, { name: 'order_payments', rows: 103886 },
+    { name: 'order_reviews', rows: 99224 }, { name: 'orders', rows: 99441 },
+    { name: 'products', rows: 32951 }, { name: 'sellers', rows: 3095 },
+  ];
+  state.models = {
+    items: [], active: null,
+    fallback: { model: 'deepseek-flash', base_url: 'https://api.deepseek.com', has_key: true },
+  };
+  const now = new Date().toISOString();
+  state.sessions = [
+    { id: 'demo-1', title: '2017 年各州订单数对比', turns: 1, updated_at: now },
+    { id: 'demo-2', title: '各月订单趋势折线图', turns: 2, updated_at: now },
+  ];
+  state.activeSession = 'demo-1';
+
+  renderWorkspaces();
+  renderTables();
+  renderModelChip();
+  renderSessions();
+}
+
 async function boot() {
   clearLog();
+
+  if (DEMO_MODE) {
+    seedDemo();
+    DEMO_EVENTS.forEach(handleEvent);
+    if (new URLSearchParams(location.search).get('panel') === 'model') {
+      openModal('modal-model');
+    }
+    return;
+  }
+
   try {
     await loadWorkspaces();
     refreshEmpty();          // 工作区数据到了才知道该推荐什么问题
@@ -990,14 +1035,6 @@ async function boot() {
   } catch (err) {
     setStatus(`初始化失败：${err.message}`, 'error');
     setReady(false);
-  }
-
-  if (DEMO_MODE) {
-    DEMO_EVENTS.forEach(handleEvent);
-    if (new URLSearchParams(location.search).get('panel') === 'model') {
-      openModal('modal-model');
-    }
-    return;
   }
 
   // ?ws=<id> 先切到指定工作区，再处理 ?session=<id>
