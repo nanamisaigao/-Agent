@@ -20,21 +20,45 @@
 
 ## 快速开始
 
-### 1. 装环境
+### 1. 一键启动
 
-需要 Python 3.11+（开发时用的是 3.13）。
+只需要先装 **Python 3.10+**（[下载](https://www.python.org/downloads/)，Windows 安装时记得勾选 *Add python.exe to PATH*）。
+
+- **Windows**：双击 `start.bat`
+- **macOS / Linux**：`chmod +x start.sh && ./start.sh`
+
+它按顺序做完这些事：
+
+1. 检查 Python 版本（低于 3.10 直接告诉你）
+2. 创建 `.venv` 虚拟环境
+3. 安装 `requirements.txt`（官方源失败会自动切清华镜像）
+4. 检查有没有数据库、有没有配模型，没有给你提示
+5. 启动服务并自动打开浏览器（端口被占会自动往后找）
+
+**第二次启动是秒开的**——依赖没变就跳过安装。想强制重装加 `--reinstall`。
+
+```powershell
+python bootstrap.py              # 安装 + 启动
+python bootstrap.py --no-serve   # 只安装依赖
+python bootstrap.py --port 9000  # 换个端口
+```
+
+> 无桌面环境（服务器）可以设 `DA_NO_BROWSER=1` 跳过自动开浏览器。
+
+<details>
+<summary>想手动控制环境也行</summary>
 
 ```powershell
 python -m venv .venv
-.\.venv\Scripts\Activate.ps1
+.\.venv\Scripts\Activate.ps1          # macOS/Linux: source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-macOS / Linux 把第二行换成 `source .venv/bin/activate`。
+</details>
 
 ### 2. 准备数据
 
-**仓库里不含数据**：`data/`、`workspaces/*/catalog.json`、`artifacts/` 都在 `.gitignore` 里
+**仓库里不含数据**：`data/`、`workspaces/*/catalog.json`、`workspaces/*/sessions/`、`artifacts/` 都在 `.gitignore` 里
 （原始 CSV 约 120 MB，建好的库 168 MB，不适合进版本库）。
 
 本项目是在 **Olist 巴西电商公开数据集** 上开发的。想复现示例，先去 Kaggle 下载
@@ -42,7 +66,7 @@ macOS / Linux 把第二行换成 `source .venv/bin/activate`。
 把 9 个 CSV 解压到 `data/`，然后建库：
 
 ```powershell
-python -m da_agent.cli ingest
+.venv\Scripts\python -m da_agent.cli ingest
 ```
 
 约 15 秒，产出 `data/olist.db`（10 张表 / 156 万行）和一份数据字典。
@@ -51,7 +75,12 @@ python -m da_agent.cli ingest
 
 ### 3. 配置模型
 
-复制 `.env.example` 为 `.env`，填上你的 key：
+**最省事**：打开网页 → 左下角模型栏 → 「添加模型」。
+里面预置了 DeepSeek、硅基流动、阿里云百炼、智谱 GLM、Kimi、小米 MiMo、OpenAI、本地 Ollama，
+点一下就填好地址和模型名，你只需粘 key。填完可以点「测试连接」验一下，
+模型名拿不准就点「获取列表」，会用你的 key 去服务端拉当前可用的模型 ID。
+
+**或者用 `.env`**：复制 `.env.example` 为 `.env`，填上你的 key：
 
 ```ini
 DA_LLM_BASE_URL=https://api.deepseek.com
@@ -63,29 +92,26 @@ DA_LLM_THINKING=disabled
 自检：
 
 ```powershell
-python -m da_agent.cli config
+.venv\Scripts\python -m da_agent.cli config
 ```
 
 > `.env` 和 `config/` 都在 `.gitignore` 里，密钥不会进版本库。
->
-> **更省事的办法**：不用 `.env`，直接打开网页 → 左下角模型栏 → 「添加模型」。
-> 里面预置了 DeepSeek、硅基流动、阿里云百炼、智谱 GLM、Kimi、小米 MiMo、OpenAI、本地 Ollama，
-> 点一下就填好地址和模型名，你只需粘 key。填完可以先点「测试连接」验一下，
-> 模型名拿不准就点「获取列表」，会用你的 key 去服务端拉当前可用的模型 ID。
 
 ### 4. 跑起来
 
 **网页**
 
 ```powershell
-python -m da_agent.cli serve
+.venv\Scripts\python -m da_agent.cli serve
 # 打开 http://127.0.0.1:8123
 ```
+
+或者直接双击 `start.bat`（它会自己搞定这些）。
 
 **命令行**
 
 ```powershell
-python -m da_agent.cli ask "2017 年哪个州的订单数最多？"
+.venv\Scripts\python -m da_agent.cli ask "2017 年哪个州的订单数最多？"
 ```
 
 ---
@@ -99,7 +125,7 @@ python -m da_agent.cli ask "2017 年哪个州的订单数最多？"
 **命令行**：
 
 ```powershell
-python -m da_agent.cli ws add D:\data\mydb.db --name "我的业务库"
+.venv\Scripts\python -m da_agent.cli ws add D:\data\mydb.db --name "我的业务库"
 ```
 
 它会做三件事：
@@ -271,6 +297,7 @@ docs/            方案文档、截图
 | 限制 | 说明 |
 |---|---|
 | `run_python` 不是沙箱 | 模型写的代码就在你的账户下跑（能读写文件、能联网）。它防的是手滑和忘了关的循环，不防恶意代码 |
+| Linux 上缺中文字体 | 图里的中文会变方块。装一下 `fonts-noto-cjk`（Debian/Ubuntu: `sudo apt install fonts-noto-cjk`）即可，代码里已按 PingFang / YaHei / SimHei / Noto 的顺序回退 |
 | Python 产物会累积 | 每次执行的结果在 `artifacts/<工作区>/runs/` 下，目前不自动清理 |
 | 只支持 SQLite | MySQL/Postgres 需要另写方言适配层 |
 | 模型档案明文存 `config/models.json` | 本地工具，靠 `.gitignore` 兜底；不要在共享机器上用 |

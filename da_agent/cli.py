@@ -441,6 +441,12 @@ def serve(
     """启动 Web 界面。"""
     import uvicorn
 
+    if host not in ("127.0.0.1", "localhost", "::1"):
+        console.print("[yellow]⚠ 注意：服务没有登录鉴权，而 run_python 会执行模型写的代码。[/yellow]")
+        console.print("[yellow]  绑定到非本机地址，等于把代码执行能力开放给整个网络。[/yellow]")
+        console.print("[yellow]  只在可信内网这么用，公网请套反向代理加认证。[/yellow]")
+        console.print()
+
     console.print(f"[bold]打开 http://{host}:{port}[/bold]  （Ctrl+C 停止）")
     uvicorn.run("da_agent.server:app", host=host, port=port, log_level="warning")
 

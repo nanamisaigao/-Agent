@@ -213,18 +213,13 @@ def _shrink(turn: list[dict]) -> list[dict]:
     return out
 
 
-def prepare(history: list[dict], budget: int = DEFAULT_BUDGET,
-            ratio: float = 1.0) -> Prepared:
-    """按预算裁剪历史，返回可以直接接在新问题前面的 messages。
-
-    ratio 是校准系数：用上一轮真实的 prompt_tokens 除以估算值，
-    让后面的估算更准（不同模型的 tokenizer 差异很大）。
-    """
+def prepare(history: list[dict], budget: int = DEFAULT_BUDGET) -> Prepared:
+    """按预算裁剪历史，返回可以直接接在新问题前面的 messages。"""
     if not history:
         return Prepared(messages=[], tokens=0)
 
     turns = split_turns(history)
-    total = int(messages_tokens(history) * ratio)
+    total = messages_tokens(history)
     if total <= budget or len(turns) <= KEEP_FULL_TURNS:
         return Prepared(messages=list(history), tokens=total, shrunk=0, dropped=0)
 
@@ -241,7 +236,7 @@ def prepare(history: list[dict], budget: int = DEFAULT_BUDGET,
                 shrunk += 1
 
     messages = [m for turn in rebuilt for m in turn]
-    total = int(messages_tokens(messages) * ratio)
+    total = messages_tokens(messages)
     if total <= budget or len(rebuilt) <= KEEP_FULL_TURNS:
         note = ""
         if shrunk:
@@ -258,7 +253,7 @@ def prepare(history: list[dict], budget: int = DEFAULT_BUDGET,
         lines.append(f"- 问过：{question}" + (f" → 结论：{conclusion}" if conclusion else ""))
 
     messages = [m for turn in kept for m in turn]
-    total = int(messages_tokens(messages) * ratio)
+    total = messages_tokens(messages)
     note = "## 更早的对话（已压缩，仅供参考）\n" + "\n".join(lines)
 
     return Prepared(messages=messages, tokens=total, shrunk=shrunk,
