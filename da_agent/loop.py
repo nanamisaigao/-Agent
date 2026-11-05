@@ -41,10 +41,13 @@ class ChatClient(Protocol):
 
 
 class ApiClient:
-    """真实模型。"""
+    """真实模型。settings 为空则用环境变量（见 llm_settings）。"""
+
+    def __init__(self, settings=None) -> None:
+        self.settings = settings
 
     def complete(self, messages: list[dict], tools: list[dict] | None = None) -> LLMReply:
-        return chat(messages, tools)
+        return chat(messages, tools, self.settings)
 
 
 def _assistant_message(reply: LLMReply) -> dict:

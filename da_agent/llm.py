@@ -61,9 +61,12 @@ def _parse(data: dict) -> LLMReply:
 
 
 def chat(messages: list[dict], tools: list[dict] | None = None,
-         attempts: int = 3) -> LLMReply:
-    """调用 /chat/completions。429 / 5xx / 网络错误会退避重试。"""
-    settings = llm_settings()
+         settings=None, attempts: int = 3) -> LLMReply:
+    """调用 /chat/completions。429 / 5xx / 网络错误会退避重试。
+
+    settings 为空时回落到环境变量——这样命令行和网页可以各用各的配置。
+    """
+    settings = settings or llm_settings()
 
     if not settings.api_key:
         raise LLMError(
@@ -80,7 +83,7 @@ def chat(messages: list[dict], tools: list[dict] | None = None,
     # 而且带 tools 的请求必须把历史 reasoning_content 原样回传，否则 400。
     # 对工具调用类任务，思考模式既慢又贵，默认关掉。
     # 注意：这个字段不是 OpenAI 标准的，所以只在明确需要时才发出去。
-    thinking = os.getenv("DA_LLM_THINKING")
+    thinking = settings.thinking if settings.thinking is not None else os.getenv("DA_LLM_THINKING")
     if thinking is None and "deepseek" in settings.base_url:
         thinking = "disabled"
     if thinking in ("enabled", "disabled"):

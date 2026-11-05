@@ -26,6 +26,10 @@ TRACES_DIR = ARTIFACTS_DIR / "traces"       # 每次问答的事件流与完整�
 WORKSPACES_DIR = PROJECT_ROOT / "workspaces"
 ACTIVE_WS_FILE = WORKSPACES_DIR / "active.json"
 
+# 本地配置（含 API key，必须 gitignore）
+CONFIG_DIR = PROJECT_ROOT / "config"
+MODELS_FILE = CONFIG_DIR / "models.json"
+
 # 所有表共用的读取参数：Olist 的 CSV 带 BOM 和引号，这一组参数能通吃
 CSV_ENCODING = "utf-8-sig"
 
@@ -36,6 +40,8 @@ class LLMSettings:
     api_key: str
     model: str
     timeout: float
+    thinking: str | None = None
+    label: str = ""
 
 
 def llm_settings() -> LLMSettings:
@@ -44,6 +50,9 @@ def llm_settings() -> LLMSettings:
     不在 import 时读死：这样 .env 在之后加载也能生效，测试也好改。
     变量名优先用项目自己的 DA_*，其次兼容 OpenAI 的标准名——
     这样你在别处已经配好的 OPENAI_API_KEY 可以直接复用。
+
+    这是"没有保存过任何模型档案"时的兜底配置；
+    界面上保存的模型档案优先级更高（见 models.py）。
     """
     load_dotenv(PROJECT_ROOT / ".env")
     return LLMSettings(
@@ -52,6 +61,8 @@ def llm_settings() -> LLMSettings:
         api_key=(os.getenv("DA_LLM_API_KEY") or os.getenv("OPENAI_API_KEY") or ""),
         model=(os.getenv("DA_LLM_MODEL") or os.getenv("OPENAI_MODEL") or "gpt-4o-mini"),
         timeout=float(os.getenv("DA_LLM_TIMEOUT", "120")),
+        thinking=os.getenv("DA_LLM_THINKING"),
+        label=os.getenv("DA_LLM_MODEL") or "环境变量配置",
     )
 
 

@@ -44,17 +44,21 @@ def version() -> None:
 
 @app.command()
 def config() -> None:
-    """检查模型配置与当前工作区（不会显示密钥内容）。"""
+    """检查当前模型配置与工作区（不会显示密钥内容）。"""
     import os
 
-    from .config import PROJECT_ROOT, llm_settings
+    from . import models
+    from .config import PROJECT_ROOT
     from .workspace import current
 
-    settings = llm_settings()
+    settings = models.current_settings()
+    profile = models.active_profile()
     env_file = PROJECT_ROOT / ".env"
-    thinking = os.getenv("DA_LLM_THINKING") or (
+    thinking = settings.thinking or (
         "disabled（deepseek 自动默认）" if "deepseek" in settings.base_url else "未设置")
 
+    source = f"模型档案 {profile.name}（{profile.id}）" if profile else ".env 环境变量"
+    console.print(f"模型来源 : {source}")
     console.print(f"base_url : {settings.base_url}")
     console.print(f"model    : {settings.model}")
     if settings.api_key:
@@ -207,6 +211,62 @@ def ws_refresh(ws_id: str = typer.Argument(None, help="工作区 ID，默认当�
 
 
 # --------------------------------------------------------------------------- #
+# 模型档案
+# --------------------------------------------------------------------------- #
+
+model_app = typer.Typer(add_completion=False, no_args_is_help=True,
+                        help="模型档案：保存多套配置，随时切换")
+app.add_typer(model_app, name="model")
+
+
+@model_app.command("list")
+def model_list() -> None:
+    """列出已保存的模型配置。"""
+    from . import models
+
+    state = models.public_state()
+    if not state["items"]:
+        console.print("还没有保存模型。可以在网页里添加，或用 `model add`。")
+        if state.get("fallback"):
+            console.print(f"[dim]当前回落到 .env：{state['fallback']['model']} "
+                          f"@ {state['fallback']['base_url']}[/dim]")
+        return
+
+    table = RichTable(header_style="bold cyan")
+    for column in ("", "ID", "名称", "模型", "端点", "密钥"):
+        table.add_column(column)
+    for item in state["items"]:
+        mark = "[green]●[/green]" if item["id"] == state["active"] else ""
+        table.add_row(mark, item["id"], item["name"], item["model"],
+                      item["base_url"], item["key_hint"])
+    console.print(table)
+
+
+@model_app.command("add")
+def model_add(
+    name: str = typer.Option(..., "--name", help="显示名，例如 DeepSeek"),
+    key: str = typer.Option(..., "--key", help="API key"),
+    base_url: str = typer.Option("https://api.deepseek.com", "--base-url"),
+    model: str = typer.Option("deepseek-flash", "--model"),
+    thinking: str = typer.Option(None, "--thinking", help="enabled / disabled"),
+) -> None:
+    """保存一套模型配置并切换过去。"""
+    from . import models
+
+    profile = models.add(name, base_url, model, key, thinking)
+    console.print(f"[green]已保存[/green] {profile.name}（{profile.id}），并设为当前模型")
+
+
+@model_app.command("use")
+def model_use(profile_id: str = typer.Argument(..., help="模型 ID")) -> None:
+    """切换当前模型。"""
+    from . import models
+
+    models.activate(profile_id)
+    console.print(f"当前模型：[green]{profile_id}[/green]")
+
+
+# --------------------------------------------------------------------------- #
 # 查询与提问
 # --------------------------------------------------------------------------- #
 
@@ -308,6 +368,7 @@ def ask(
     ws: str | None = typer.Option(None, "--ws", help="工作区 ID，默认当前"),
 ) -> None:
     """问一个问题，看 agent 一步步怎么查出来。"""
+    from . import models
     from .llm import EchoClient
     from .loop import ApiClient, run
     from .trace import write_trace
@@ -315,7 +376,7 @@ def ask(
 
     workspace = load(ws) if ws else current()
     console.rule(f"[bold]{question}[/bold] [dim]· {workspace.name}[/dim]")
-    client = EchoClient() if fake else ApiClient()
+    client = EchoClient() if fake else ApiClient(models.current_settings())
 
     records: list[dict] = []
     for event in run(question, client=client, max_steps=max_steps, workspace=workspace):

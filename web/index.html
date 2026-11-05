@@ -7,39 +7,121 @@
   <link rel="stylesheet" href="/static/style.css" />
 </head>
 <body>
-  <header class="bar">
-    <div class="frame bar-inner">
-      <div class="brand">
+  <div class="app">
+    <aside class="sidebar" id="sidebar">
+      <div class="side-brand">
         <span class="dot"></span>
         <strong>da_agent</strong>
-        <span class="sub">Olist 电商数据分析</span>
       </div>
-      <div class="bar-right">
-        <div class="status" id="status">就绪</div>
-        <button class="icon-btn" id="theme" title="切换明暗主题">☾</button>
+
+      <div class="side-head">
+        <span>工作区</span>
+        <button class="mini-btn" id="btn-add-ws" title="添加数据库">＋</button>
+      </div>
+      <div class="ws-list" id="ws-list"></div>
+
+      <div class="side-head">
+        <span>表</span>
+        <span class="side-count" id="table-count"></span>
+      </div>
+      <div class="table-list" id="table-list"></div>
+
+      <button class="model-chip" id="btn-model">
+        <span class="chip-dot"></span>
+        <span class="chip-text" id="model-label">未配置模型</span>
+        <span class="chip-caret">›</span>
+      </button>
+    </aside>
+
+    <main class="main">
+      <header class="bar">
+        <div class="bar-inner">
+          <button class="icon-btn menu-btn" id="btn-menu" title="工作区">☰</button>
+          <div class="brand">
+            <strong id="ws-title">…</strong>
+            <span class="sub" id="ws-sub"></span>
+          </div>
+          <div class="bar-right">
+            <div class="status" id="status">就绪</div>
+            <button class="icon-btn" id="theme" title="切换明暗主题">☾</button>
+          </div>
+        </div>
+      </header>
+
+      <div class="log" id="log"></div>
+
+      <footer class="composer">
+        <div class="composer-inner">
+          <textarea id="q" rows="1" placeholder="输入问题，Enter 发送，Shift + Enter 换行"></textarea>
+          <button id="send" title="发送">发送</button>
+        </div>
+      </footer>
+    </main>
+  </div>
+
+  <!-- 添加数据库 -->
+  <div class="modal" id="modal-ws" hidden>
+    <div class="modal-card">
+      <div class="modal-head">
+        <span>添加数据库</span>
+        <button class="modal-x" data-close>✕</button>
+      </div>
+      <div class="modal-body">
+        <label class="field">
+          <span>SQLite 文件路径</span>
+          <input id="ws-path" placeholder="D:\data\mydb.db" />
+        </label>
+        <label class="field">
+          <span>显示名（可选）</span>
+          <input id="ws-name" placeholder="默认用文件名" />
+        </label>
+        <p class="hint-text">添加后会自动分析表结构，结果保存在 workspaces/&lt;id&gt;/ 下。</p>
+        <p class="form-error" id="ws-error" hidden></p>
+      </div>
+      <div class="modal-foot">
+        <button class="ghost" data-close>取消</button>
+        <button id="ws-submit">开始分析</button>
       </div>
     </div>
-  </header>
+  </div>
 
-  <main class="log" id="log">
-    <div class="empty" id="empty">
-      <p>问点什么试试</p>
-      <ul>
-        <li>2017 年哪个州的订单数最多？</li>
-        <li>各月的平均客单价是多少？</li>
-        <li>差评率最高的商品类目是哪些？</li>
-      </ul>
-      <p class="tip">每一步的 SQL 和查询结果都会展开给你看</p>
+  <!-- 模型设置 -->
+  <div class="modal" id="modal-model" hidden>
+    <div class="modal-card">
+      <div class="modal-head">
+        <span>模型设置</span>
+        <button class="modal-x" data-close>✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="model-list" id="model-list"></div>
+
+        <details class="add-model" id="add-model">
+          <summary>＋ 添加模型</summary>
+          <div class="form">
+            <label class="field">
+              <span>显示名</span>
+              <input id="m-name" placeholder="DeepSeek" />
+            </label>
+            <label class="field">
+              <span>Base URL</span>
+              <input id="m-base" value="https://api.deepseek.com" />
+            </label>
+            <label class="field">
+              <span>模型名</span>
+              <input id="m-model" value="deepseek-flash" />
+            </label>
+            <label class="field">
+              <span>API Key</span>
+              <input id="m-key" type="password" placeholder="sk-…" autocomplete="off" />
+            </label>
+            <p class="form-error" id="m-error" hidden></p>
+            <button id="m-submit">保存并启用</button>
+          </div>
+        </details>
+      </div>
     </div>
-  </main>
+  </div>
 
-  <footer class="composer">
-    <div class="frame composer-inner">
-      <textarea id="q" rows="1" placeholder="输入问题，Enter 发送，Shift + Enter 换行"></textarea>
-      <button id="send" title="发送">发送</button>
-    </div>
-  </footer>
-
-  <script type="module" src="/static/app.js"></script>
+  <script type="module" src="/static/js/app.js"></script>
 </body>
 </html>
