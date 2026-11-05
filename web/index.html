@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>da_agent · 数据分析</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <header class="bar">
+    <div class="frame bar-inner">
+      <div class="brand">
+        <span class="dot"></span>
+        <strong>da_agent</strong>
+        <span class="sub">Olist 电商数据分析</span>
+      </div>
+      <div class="bar-right">
+        <div class="status" id="status">就绪</div>
+        <button class="icon-btn" id="theme" title="切换明暗主题">☾</button>
+      </div>
+    </div>
+  </header>
+
+  <main class="log" id="log">
+    <div class="empty" id="empty">
+      <p>问点什么试试</p>
+      <ul>
+        <li>2017 年哪个州的订单数最多？</li>
+        <li>各月的平均客单价是多少？</li>
+        <li>差评率最高的商品类目是哪些？</li>
+      </ul>
+      <p class="tip">每一步的 SQL 和查询结果都会展开给你看</p>
+    </div>
+  </main>
+
+  <footer class="composer">
+    <div class="frame composer-inner">
+      <textarea id="q" rows="1" placeholder="输入问题，Enter 发送，Shift + Enter 换行"></textarea>
+      <button id="send" title="发送">发送</button>
+    </div>
+  </footer>
+
+  <script type="module" src="/static/app.js"></script>
+</body>
+</html>
