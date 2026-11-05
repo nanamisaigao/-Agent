@@ -1,0 +1,27 @@
+"""全局路径配置：项目里任何"文件在哪"的问题，只在这里回答。
+
+为什么单独一个文件：
+1. 后面 agent 要读写文件时，路径不散落在各处，改一次就全改；
+2. PyCharm 里点运行按钮时，工作目录可能不是项目根，靠 __file__ 定位才可靠。
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+# __file__ = <项目根>/da_agent/config.py，parents[1] 就是项目根
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
+DATA_DIR = PROJECT_ROOT / "data"          # 原始 CSV（只读，不要改）
+DB_PATH = DATA_DIR / "olist.db"           # 由 CSV 生成的 SQLite 库（衍生品，可重建）
+CATALOG_PATH = DATA_DIR / "olist.catalog.json"  # 数据字典（衍生品）
+ARTIFACTS_DIR = PROJECT_ROOT / "artifacts"  # 图、导出结果、报告（后面才用）
+
+# 所有表共用的读取参数：Olist 的 CSV 带 BOM 和引号，这一组参数能通吃
+CSV_ENCODING = "utf-8-sig"
+
+
+def ensure_dirs() -> None:
+    """创建运行时需要的目录（已存在则不动）。"""
+    for d in (DATA_DIR, ARTIFACTS_DIR):
+        d.mkdir(parents=True, exist_ok=True)
