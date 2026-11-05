@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -358,6 +359,25 @@ def active_id() -> str | None:
         return json.loads(ACTIVE_WS_FILE.read_text(encoding="utf-8")).get("id")
     except (json.JSONDecodeError, OSError):
         return None
+
+
+def remove(ws_id: str) -> None:
+    """删掉工作区目录（数据字典、业务笔记、会话）。
+
+    **不会删你的 .db 文件**——那可能是唯一一份原始数据，删了就找不回来。
+    """
+    folder = WORKSPACES_DIR / ws_id
+    if not (folder / "workspace.json").exists():
+        raise FileNotFoundError(f"工作区不存在：{ws_id}")
+
+    shutil.rmtree(folder, ignore_errors=True)
+
+    if active_id() == ws_id:
+        remaining = list_all()
+        if remaining:
+            set_active(remaining[0]["id"])
+        elif ACTIVE_WS_FILE.exists():
+            ACTIVE_WS_FILE.unlink()
 
 
 def set_active(ws_id: str) -> None:

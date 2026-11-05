@@ -275,13 +275,35 @@ body {
   border-bottom: 1px solid var(--line-soft);
 }
 
-.sql-label {
+.sql-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   padding: 9px 14px 0;
+}
+
+.sql-label {
   font-size: 11px;
   letter-spacing: .08em;
   text-transform: uppercase;
   color: var(--dim);
 }
+
+.copy-btn {
+  border: 1px solid var(--line-soft);
+  background: transparent;
+  color: var(--dim);
+  font-size: 11px;
+  line-height: 1.6;
+  padding: 0 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  opacity: .65;
+  transition: opacity .12s ease, color .12s ease, border-color .12s ease;
+}
+.copy-btn:hover { opacity: 1; color: var(--accent); border-color: var(--accent-line); }
+.copy-btn.ok { opacity: 1; color: var(--ok); border-color: var(--ok); }
 
 /* 不折行，窄屏横向滚动：折行会把 SQL 断成碎片，没法读 */
 .sql-block pre {
@@ -549,6 +571,39 @@ pre.stdout {
   text-overflow: ellipsis;
 }
 .ss-meta { font-size: 11px; color: var(--dim); }
+
+/* 侧栏列表行：主按钮 + 悬停出现的删除按钮 */
+.list-row { display: flex; align-items: center; gap: 2px; }
+.list-row > .ws-item,
+.list-row > .session-item { flex: 1; min-width: 0; }
+
+.row-del {
+  flex: none;
+  width: 22px; height: 22px;
+  display: grid;
+  place-items: center;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dim);
+  font-size: 11px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity .12s ease, color .12s ease;
+}
+.list-row:hover .row-del { opacity: 1; }
+.row-del:hover { color: var(--err); background: var(--hover); }
+
+/* 流式输出时的光标 */
+.msg.answer.streaming::after {
+  content: "▍";
+  margin-left: 2px;
+  color: var(--accent);
+  animation: caret 1s steps(2) infinite;
+}
+@keyframes caret {
+  50% { opacity: 0; }
+}
 
 .ws-item {
   display: flex;

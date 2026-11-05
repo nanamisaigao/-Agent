@@ -80,22 +80,9 @@ def _parse(data: dict) -> LLMReply:
     )
 
 
-def chat(messages: list[dict], tools: list[dict] | None = None,
-         settings=None, attempts: int = 3) -> LLMReply:
-    """调用 /chat/completions。429 / 5xx / 网络错误会退避重试。
-
-    settings 为空时回落到环境变量——这样命令行和网页可以各用各的配置。
-    """
-    settings = settings or llm_settings()
-
-    if not settings.api_key:
-        raise LLMError(
-            "没有找到 API key。请在项目根目录的 .env 里写：\n"
-            "  OPENAI_API_KEY=sk-...\n"
-            "或者设置环境变量 OPENAI_API_KEY / DA_LLM_API_KEY。\n"
-            "（.env 要加进 .gitignore，别把密钥提交上去）"
-        )
-
+def _build_request(settings, messages: list[dict], tools: list[dict] | None,
+                   stream: bool = False):
+    """把「模型 + 消息 + 工具」拼成一次 HTTP 请求。流式和非流式共用。"""
     url = settings.base_url.rstrip("/") + "/chat/completions"
     payload: dict = {"model": settings.model, "messages": messages, "temperature": 0}
 
@@ -113,12 +100,38 @@ def chat(messages: list[dict], tools: list[dict] | None = None,
         payload["tools"] = tools
         payload["tool_choice"] = "auto"
 
+    if stream:
+        payload["stream"] = True
+
     body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
     headers = {
         "Content-Type": "application/json",
         "Authorization": f"Bearer {settings.api_key}",
         "User-Agent": "da-agent/0.1",
     }
+    return url, body, headers
+
+
+def _ensure_key(settings) -> None:
+    if not settings.api_key:
+        raise LLMError(
+            "没有找到 API key。请在项目根目录的 .env 里写：\n"
+            "  OPENAI_API_KEY=sk-...\n"
+            "或者设置环境变量 OPENAI_API_KEY / DA_LLM_API_KEY。\n"
+            "（.env 要加进 .gitignore，别把密钥提交上去）"
+        )
+
+
+def chat(messages: list[dict], tools: list[dict] | None = None,
+         settings=None, attempts: int = 3) -> LLMReply:
+    """调用 /chat/completions。429 / 5xx / 网络错误会退避重试。
+
+    settings 为空时回落到环境变量——这样命令行和网页可以各用各的配置。
+    """
+    settings = settings or llm_settings()
+    _ensure_key(settings)
+
+    url, body, headers = _build_request(settings, messages, tools)
 
     last_error: LLMError | None = None
     for attempt in range(attempts):
@@ -135,6 +148,95 @@ def chat(messages: list[dict], tools: list[dict] | None = None,
                 continue
             raise LLMError(f"HTTP {exc.code}：{message}") from None
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
+            last_error = LLMError(f"网络错误：{exc}")
+            time.sleep(2 * (attempt + 1))
+
+    raise last_error or LLMError("调用模型失败（未知原因）")
+
+
+def chat_stream(messages: list[dict], tools: list[dict] | None = None,
+                settings=None, attempts: int = 3):
+    """流式调用。
+
+    逐条 yield ("text", 片段)，最后 yield ("reply", LLMReply)。
+    用生成器而不是回调：调用方 loop.run() 本身就是生成器，直接转发最省事，
+    不用开线程做队列。代价是重试只能发生在「一个字符都还没吐出去」的时候。
+    """
+    settings = settings or llm_settings()
+    _ensure_key(settings)
+
+    url, body, headers = _build_request(settings, messages, tools, stream=True)
+
+    last_error: LLMError | None = None
+    for attempt in range(attempts):
+        emitted = False
+        try:
+            request = urllib.request.Request(url, data=body, method="POST", headers=headers)
+            with urllib.request.urlopen(request, timeout=settings.timeout) as response:
+                pieces: list[str] = []
+                slots: dict[int, dict] = {}
+                usage: dict = {}
+                finish: str | None = None
+
+                for raw in response:
+                    line = raw.decode("utf-8", "replace").strip()
+                    if not line.startswith("data:"):
+                        continue
+                    data = line[5:].strip()
+                    if data == "[DONE]":
+                        break
+                    try:
+                        chunk = json.loads(data)
+                    except json.JSONDecodeError:
+                        continue
+
+                    if chunk.get("usage"):
+                        usage = chunk["usage"]
+                    choices = chunk.get("choices") or []
+                    if not choices:
+                        continue
+
+                    choice = choices[0]
+                    finish = choice.get("finish_reason") or finish
+                    delta = choice.get("delta") or {}
+
+                    text = delta.get("content")
+                    if text:
+                        emitted = True
+                        pieces.append(text)
+                        yield "text", text
+
+                    # 工具调用是分片到达的：按 index 攒起来
+                    for call in delta.get("tool_calls") or []:
+                        index = call.get("index", 0)
+                        slot = slots.setdefault(index, {"id": "", "name": "", "arguments": ""})
+                        if call.get("id"):
+                            slot["id"] = call["id"]
+                        function = call.get("function") or {}
+                        if function.get("name"):
+                            slot["name"] = function["name"]
+                        if function.get("arguments"):
+                            slot["arguments"] += function["arguments"]
+
+                yield "reply", LLMReply(
+                    content="".join(pieces) or None,
+                    tool_calls=[slots[i] for i in sorted(slots)],
+                    usage=usage or {},
+                    finish_reason=finish,
+                )
+                return
+
+        except urllib.error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", "replace")[:500]
+            message = _provider_message(detail)
+            retriable = exc.code in (408, 409, 429) or exc.code >= 500
+            if emitted or not retriable:
+                raise LLMError(f"HTTP {exc.code}：{message}") from None
+            last_error = LLMError(f"HTTP {exc.code}：{message}")
+            time.sleep(2 * (attempt + 1))
+        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+            if emitted:
+                raise LLMError(f"流式输出中断：{exc}") from None
             last_error = LLMError(f"网络错误：{exc}")
             time.sleep(2 * (attempt + 1))
 

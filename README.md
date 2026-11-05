@@ -24,7 +24,7 @@
 - **可以换库**：每个数据库是一个「工作区」，接入时自动分析表结构并存到本地
 - **可以换模型**：网页里切换任意 OpenAI 兼容服务（DeepSeek / OpenAI / 本地 Ollama …）
 - **只读安全**：查询只走只读连接，只允许单条 `SELECT`，有超时中断
-- **过程透明**：每一步的 SQL / Python、返回行数、耗时都能看到，状态栏实时显示"第几步、跑了多久"
+- **过程透明**：答案逐字输出，每一步的 SQL / Python、返回行数、耗时都能看到，状态栏实时显示"第几步、跑了多久"，结尾标注这次用了多少上下文
 
 **它不是什么**：不是 BI 平台，不是自动报表工具，也没有多用户和权限体系。它是一个本地单机、用来"把一次数据分析做给人看"的工具。
 
@@ -172,6 +172,7 @@ workspaces/
 | `ws use <id>` | 切换工作区 |
 | `ws show [id]` | 看表清单、业务笔记、自动生成的示例问题 |
 | `ws refresh [id]` | 数据结构变了之后重新分析 |
+| `ws remove <id>` | 移除工作区（只删字典/笔记/会话，不动你的 `.db`） |
 | `sql "<查询>" [--ws id]` | 手动跑一条只读 SQL |
 | `ask "<问题>" [--ws id] [--session id]` | 提问，看完整过程（带 `--session` 继续上次） |
 | `serve [--port] [--host]` | 启动网页 |
@@ -223,7 +224,7 @@ workspaces/
 
 核心是**一个内核，多个前端**：`loop.run()` 只负责推理并吐出事件，CLI 和浏览器各自渲染同一批事件。加一个新界面不需要改任何业务逻辑。
 
-事件类型：`context` / `run_start` / `step` / `text` / `tool_call` / `tool_result` / `answer` / `run_end` / `error`。
+事件类型：`context` / `run_start` / `step` / `token` / `text` / `tool_call` / `tool_result` / `answer` / `run_end` / `error`。
 
 一次问答的上下文长这样（`artifacts/traces/*.jsonl` 里存的就是完整版）：
 

@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from dataclasses import asdict
 from pathlib import Path
 
@@ -219,6 +220,25 @@ def ws_show(ws_id: str = typer.Argument(None, help="工作区 ID，默认当前"
         console.print(Panel(workspace.notes, title="业务笔记 notes.md", border_style="dim"))
 
 
+@ws_app.command("remove")
+def ws_remove(
+    ws_id: str = typer.Argument(..., help="工作区 ID"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="不询问直接删"),
+) -> None:
+    """移除工作区（只删字典/笔记/会话，不动你的 .db 文件）。"""
+    from .workspace import remove
+
+    workspace = _load_workspace(ws_id)
+    if not yes:
+        typer.confirm(
+            f"删除工作区「{workspace.name}」的数据字典、笔记和会话？\n"
+            f"（不会删 {workspace.db}）",
+            abort=True,
+        )
+    remove(workspace.id)
+    console.print(f"已移除工作区 [red]{workspace.id}[/red]")
+
+
 @ws_app.command("refresh")
 def ws_refresh(ws_id: str = typer.Argument(None, help="工作区 ID，默认当前")) -> None:
     """重新分析数据库结构（数据变了之后用）。notes.md 不会被覆盖。"""
@@ -324,12 +344,18 @@ def sql(
     console.print(f"[dim]{summary_line(result)}[/dim]")
 
 
-def _render(event: dict) -> None:
+def _render(event: dict, streamed: bool = False) -> None:
     """把事件渲染成人能读的样子。
 
     Web 前端渲染的是同一批事件——所以这里只做"展示"，不做任何业务判断。
     """
     kind = event.get("type")
+
+    if kind == "token":
+        # 流式片段：直接写 stdout，不走 rich（markup 会吃掉内容）
+        sys.stdout.write(event.get("text") or "")
+        sys.stdout.flush()
+        return
 
     if kind == "text":
         console.print(event["text"], style="dim")
@@ -373,7 +399,8 @@ def _render(event: dict) -> None:
 
     elif kind == "answer":
         console.print()
-        console.print(Markdown(event.get("text") or ""))
+        if not streamed:
+            console.print(Markdown(event.get("text") or ""))
 
     elif kind == "error":
         console.print(f"[red]错误：{event.get('message')}[/red]")
@@ -412,8 +439,11 @@ def ask(
     client = EchoClient() if fake else ApiClient(models.current_settings())
 
     records: list[dict] = []
+    streamed = False
     for event in run(question, client=client, max_steps=max_steps,
                      workspace=workspace, history=session.messages):
+        if event["type"] == "token":
+            streamed = True
         if event["type"] == "run_start":
             event["session_id"] = session.id
         if event["type"] == "run_end" and event.get("ok"):
@@ -423,7 +453,7 @@ def ask(
             session_store.save(workspace, session)
 
         records.append(event)
-        _render(event)
+        _render(event, streamed=streamed)
 
     console.print(f"[dim]会话 {session.id} · 继续追问加 --session {session.id}[/dim]")
 

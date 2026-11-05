@@ -28,7 +28,7 @@ import json
 from typing import Iterator, Protocol
 
 from .context import build_system_prompt
-from .llm import LLMError, LLMReply, chat
+from .llm import LLMError, LLMReply, chat, chat_stream
 from .tools import ToolContext
 from .tools import call as call_tool
 from .tools import schemas
@@ -48,6 +48,10 @@ class ApiClient:
 
     def complete(self, messages: list[dict], tools: list[dict] | None = None) -> LLMReply:
         return chat(messages, tools, self.settings)
+
+    def stream(self, messages: list[dict], tools: list[dict] | None = None):
+        """逐字返回：先若干 ("text", 片段)，最后 ("reply", LLMReply)。"""
+        yield from chat_stream(messages, tools, self.settings)
 
 
 def _assistant_message(reply: LLMReply) -> dict:
@@ -92,7 +96,7 @@ def run(question: str, client: ChatClient | None = None,
     history 是之前的对话（不含 system），多轮追问靠它。
     不传 workspace 就用当前激活的那个，方便命令行直接跑。
     """
-    from .session import default_budget, prepare
+    from .session import default_budget, messages_tokens, prepare
     from .workspace import current
 
     ws = workspace or current()
@@ -112,8 +116,11 @@ def run(question: str, client: ChatClient | None = None,
         {"role": "user", "content": question},
     ]
     usage = {"prompt_tokens": 0, "completion_tokens": 0}
+    # 这次请求实际塞进去多少 token：system + 历史 + 新问题
+    prompt_tokens = messages_tokens(messages)
 
-    yield {"type": "context", "tokens": prepared.tokens, "budget": budget,
+    yield {"type": "context", "tokens": prompt_tokens, "budget": budget,
+           "history_tokens": prepared.tokens,
            "shrunk": prepared.shrunk, "dropped": prepared.dropped}
 
     yield {"type": "run_start", "question": question,
@@ -125,7 +132,19 @@ def run(question: str, client: ChatClient | None = None,
         yield {"type": "step", "step": step, "max_steps": max_steps, "phase": "thinking"}
 
         try:
-            reply = client.complete(messages, schemas())
+            reply: LLMReply | None = None
+            # 有 stream 就用流式（逐字推给前端），没有就退回一次性调用
+            if hasattr(client, "stream"):
+                for kind, value in client.stream(messages, schemas()):
+                    if kind == "text":
+                        yield {"type": "token", "text": value}
+                    else:
+                        reply = value
+            else:
+                reply = client.complete(messages, schemas())
+
+            if reply is None:
+                raise LLMError("模型没有返回内容")
         except LLMError as exc:
             yield {"type": "error", "message": str(exc)}
             yield {"type": "run_end", "ok": False, "steps": step - 1,

@@ -30,7 +30,8 @@ from .config import ARTIFACTS_DIR, PROJECT_ROOT
 from .llm import EchoClient, list_models, probe
 from .loop import ApiClient, run
 from .trace import write_trace
-from .workspace import create, current, list_all, load, set_active, suggest_questions
+from .workspace import (create, current, list_all, load, remove, set_active,
+                        suggest_questions)
 
 WEB_DIR = PROJECT_ROOT / "web"
 
@@ -198,6 +199,18 @@ def activate_workspace(body: IdIn) -> dict:
     except Exception:
         raise HTTPException(404, f"工作区不存在：{body.id}") from None
     return {"ok": True, "active": body.id}
+
+
+@app.delete("/api/workspaces/{ws_id}")
+def delete_workspace(ws_id: str) -> dict:
+    """删除工作区（字典/笔记/会话）。不会动用户的 .db 文件。"""
+    try:
+        remove(ws_id)
+    except FileNotFoundError:
+        raise HTTPException(404, f"工作区不存在：{ws_id}") from None
+    except OSError as exc:
+        raise HTTPException(400, f"删除失败：{exc}") from None
+    return workspaces()
 
 
 @app.get("/api/tables")

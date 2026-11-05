@@ -28,6 +28,7 @@ const state = {
   sessions: [],
   activeSession: null,
   pendingContext: null,
+  lastContext: null,
   busy: false,
 };
 
@@ -136,6 +137,78 @@ function append(className, html) {
   return div;
 }
 
+/* 流式输出：先建一个占位气泡，逐字往里塞，最后再用 markdown 重绘一遍 */
+let streamNode = null;
+let streamText = '';
+
+function appendToken(text) {
+  if (!streamNode) {
+    const empty = $('empty');
+    if (empty) empty.remove();
+    streamNode = document.createElement('div');
+    streamNode.className = 'msg answer streaming';
+    logEl.appendChild(streamNode);
+    streamText = '';
+  }
+  streamText += text;
+  streamNode.textContent = streamText;
+  scrollToBottom();
+}
+
+/** 结束流式气泡；返回是否真的处理了 */
+function finishStream(finalText) {
+  if (!streamNode) return false;
+  const target = streamNode;
+  streamNode = null;
+  streamText = '';
+  target.classList.remove('streaming');
+  target.innerHTML = markdown(finalText || target.textContent || '');
+  scrollToBottom();
+  return true;
+}
+
+/** 模型边说边调工具：把流式气泡降级成普通叙述 */
+function demoteStream() {
+  if (!streamNode) return;
+  streamNode.className = 'msg narration';
+  streamNode = null;
+  streamText = '';
+}
+
+async function copyCode(button, text) {
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(text);
+    } else {
+      const area = document.createElement('textarea');
+      area.value = text;
+      area.style.position = 'fixed';
+      area.style.opacity = '0';
+      document.body.appendChild(area);
+      area.select();
+      document.execCommand('copy');
+      area.remove();
+    }
+    button.textContent = '已复制';
+    button.classList.add('ok');
+  } catch (err) {
+    button.textContent = '复制失败';
+  }
+  setTimeout(() => {
+    button.textContent = '复制';
+    button.classList.remove('ok');
+  }, 1200);
+}
+
+function fmtTokens(value) {
+  const n = Number(value) || 0;
+  if (n >= 1000) {
+    const k = n / 1000;
+    return `${Number.isInteger(k) ? k : k.toFixed(1)}k`;
+  }
+  return String(n);
+}
+
 /* ------------------------------------------------------------------ */
 /* 2. 对话区                                                          */
 /* ------------------------------------------------------------------ */
@@ -162,10 +235,17 @@ function buildToolCard(id, name, args) {
       <span class="meta" data-role="meta">运行中…</span>
     </div>
     <div class="sql-block">
-      <div class="sql-label">${label}</div>
+      <div class="sql-head">
+        <span class="sql-label">${label}</span>
+        <button class="copy-btn" type="button" title="只复制代码">复制</button>
+      </div>
       <pre></pre>
     </div>`;
   card.querySelector('pre').textContent = body || '（这次调用没有代码参数）';
+  card.querySelector('.copy-btn').onclick = (event) => {
+    event.stopPropagation();
+    copyCode(event.currentTarget, body || '');
+  };
 
   logEl.appendChild(card);
   toolCards.set(id, card);
@@ -262,6 +342,7 @@ function handleEvent(event) {
   switch (event.type) {
     case 'context':
       state.pendingContext = event;
+      state.lastContext = event;
       break;
     case 'step':
       startStepClock(`第 ${event.step}/${event.max_steps} 步 · 思考中`);
@@ -272,15 +353,20 @@ function handleEvent(event) {
       const ctx = state.pendingContext;
       if (ctx && (ctx.shrunk || ctx.dropped)) {
         append('usage', `上下文已压缩：${ctx.shrunk || 0} 轮精简 · `
-          + `${ctx.dropped || 0} 轮省略（约 ${ctx.tokens || 0} tokens）`);
+          + `${ctx.dropped || 0} 轮省略`);
       }
       state.pendingContext = null;
       break;
     }
+    case 'token':
+      appendToken(event.text || '');
+      break;
     case 'text':
+      demoteStream();
       append('narration', esc(event.text));
       break;
     case 'tool_call':
+      demoteStream();
       startStepClock(`第 ${event.step} 步 · 执行 ${event.name}`);
       addToolCall(event);
       break;
@@ -289,16 +375,23 @@ function handleEvent(event) {
       fillToolResult(event);
       break;
     case 'answer':
-      append('answer', markdown(event.text || ''));
+      if (!finishStream(event.text || '')) append('answer', markdown(event.text || ''));
       break;
     case 'error':
+      demoteStream();
       append('answer', `<div class="errbox">${esc(event.message)}</div>`);
       stopStepClock('出错');
       break;
     case 'run_end': {
       const usage = event.usage || {};
-      append('usage', `完成 · ${event.steps} 步 · prompt ${usage.prompt_tokens || 0}`
-        + ` / completion ${usage.completion_tokens || 0} tokens`);
+      const ctx = state.lastContext;
+      const parts = [`完成 · ${event.steps} 步`];
+      if (ctx && ctx.budget) {
+        const percent = Math.round((ctx.tokens / ctx.budget) * 100);
+        parts.push(`上下文 ${fmtTokens(ctx.tokens)} / ${fmtTokens(ctx.budget)}（${percent}%）`);
+      }
+      parts.push(`prompt ${usage.prompt_tokens || 0} / completion ${usage.completion_tokens || 0} tokens`);
+      append('usage', parts.join(' · '));
       stopStepClock();
       break;
     }
@@ -312,6 +405,9 @@ async function ask(question) {
   sendBtn.disabled = true;
   inputEl.disabled = true;
   toolCards = new Map();
+  streamNode = null;
+  streamText = '';
+  state.lastContext = null;
   setStatus('查询中…', 'busy');
 
   try {
@@ -382,13 +478,27 @@ function renderWorkspaces() {
   }
 
   for (const workspace of state.workspaces) {
+    const row = document.createElement('div');
+    row.className = 'list-row';
+
     const item = document.createElement('button');
     item.className = `ws-item${workspace.id === state.activeWs ? ' active' : ''}`;
     item.innerHTML = `
       <span class="ws-name">${esc(workspace.name)}</span>
       <span class="ws-meta">${workspace.tables} 表 · ${formatRows(workspace.rows)} 行</span>`;
     item.onclick = () => switchWorkspace(workspace.id);
-    box.appendChild(item);
+
+    const del = document.createElement('button');
+    del.className = 'row-del';
+    del.title = '删除工作区（不会删数据库文件）';
+    del.textContent = '✕';
+    del.onclick = (event) => {
+      event.stopPropagation();
+      deleteWorkspace(workspace);
+    };
+
+    row.append(item, del);
+    box.appendChild(row);
   }
 
   const active = state.workspaces.find((w) => w.id === state.activeWs);
@@ -451,12 +561,69 @@ function renderSessions() {
   }
 
   for (const session of state.sessions) {
+    const row = document.createElement('div');
+    row.className = 'list-row';
+
     const item = document.createElement('button');
     item.className = `session-item${session.id === state.activeSession ? ' active' : ''}`;
     item.innerHTML = `<span class="ss-title">${esc(session.title)}</span>`
       + `<span class="ss-meta">${session.turns} 轮 · ${shortTime(session.updated_at)}</span>`;
     item.onclick = () => openSession(session.id);
-    box.appendChild(item);
+
+    const del = document.createElement('button');
+    del.className = 'row-del';
+    del.title = '删除这个会话';
+    del.textContent = '✕';
+    del.onclick = (event) => {
+      event.stopPropagation();
+      deleteSession(session);
+    };
+
+    row.append(item, del);
+    box.appendChild(row);
+  }
+}
+
+async function deleteSession(session) {
+  const ok = window.confirm(`删除会话「${session.title}」？\n\n历史记录会被删除，无法恢复。`);
+  if (!ok) return;
+  try {
+    const data = await api(
+      `/api/sessions/${encodeURIComponent(session.id)}?workspace=${encodeURIComponent(state.activeWs)}`,
+      { method: 'DELETE' });
+    state.sessions = data.sessions;
+    if (state.activeSession === session.id) {
+      state.activeSession = null;
+      clearLog();
+    }
+    renderSessions();
+    setStatus('已删除会话', '');
+  } catch (err) {
+    setStatus(`删除失败：${err.message}`, 'error');
+  }
+}
+
+async function deleteWorkspace(workspace) {
+  const ok = window.confirm(
+    `删除工作区「${workspace.name}」？\n\n`
+    + '会删掉它的数据字典、业务笔记和所有会话记录。\n'
+    + '你的数据库文件不会被删除：\n'
+    + workspace.db);
+  if (!ok) return;
+
+  try {
+    const data = await api(`/api/workspaces/${encodeURIComponent(workspace.id)}`,
+      { method: 'DELETE' });
+    state.workspaces = data.items;
+    state.activeWs = data.active;
+    state.activeSession = null;
+    renderWorkspaces();
+    await loadTables();
+    await loadSessions();
+    clearLog();
+    setStatus('已删除工作区', '');
+  } catch (err) {
+    setStatus(`删除失败：${err.message}`, 'error');
   }
 }
 
@@ -941,6 +1108,7 @@ themeBtn.addEventListener('click', () => {
 
 /* 演示模式：?demo=1 渲染预置对话，不发任何请求 */
 const DEMO_EVENTS = [
+  { type: 'context', tokens: 4820, budget: 20000, history_tokens: 0, shrunk: 0, dropped: 0 },
   { type: 'run_start', question: '2017 年哪个州的订单数最多？' },
   { type: 'text', text: '我按 2017 年整年、客户所在州统计订单数。' },
   {
