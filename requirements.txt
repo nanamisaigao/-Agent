@@ -1,6 +1,7 @@
 # 运行时依赖。按阶段添加，不提前装用不上的东西。
 pandas>=2.2
 pyarrow>=15
+matplotlib>=3.8
 typer>=0.12
 rich>=13
 pydantic>=2.7

@@ -9,9 +9,10 @@ from __future__ import annotations
 import json
 
 from .base import Tool, ToolContext
+from .python import RUN_PYTHON
 from .sql import RUN_SQL
 
-TOOLS: dict[str, Tool] = {tool.name: tool for tool in (RUN_SQL,)}
+TOOLS: dict[str, Tool] = {tool.name: tool for tool in (RUN_SQL, RUN_PYTHON)}
 
 
 def schemas() -> list[dict]:

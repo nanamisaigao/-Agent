@@ -17,3 +17,5 @@ artifacts/
 config/
 workspaces/*/catalog.json
 workspaces/active.json
+
+workspaces/*/sessions/

@@ -18,7 +18,7 @@ MAX_COLUMNS = 40
 
 RULES = """## 工作规则
 
-1. 只通过 run_sql 取数。所有数字必须来自查询结果，禁止估算、禁止编造。
+1. 取数只通过 run_sql，或在 run_python 里用 query(sql)。所有数字必须来自查询结果，禁止估算、禁止编造。
 2. 一次只验证一个假设：先取最小必要的数据，看到结果再决定下一步。
 3. **先确认表的粒度**（一行代表什么）再 join。join 后行数明显变多，说明粒度对不上，
    要去重或先聚合成一张"每个实体一行"的表再连。
@@ -27,6 +27,17 @@ RULES = """## 工作规则
 5. 金额/小数汇总后用 `ROUND(x, 2)`。
 6. 问题有口径歧义时，**先说明你的假设再执行**，不要反问用户——你没有追问的机会。
 7. 最终回答用中文：结论 → 关键数字 → 最后一行写明口径。
+"""
+
+TOOLS = """## 两个工具怎么分工
+
+- **run_sql**：取数、过滤、join、聚合。能用 SQL 表达的优先用它，省 token 也更快。
+- **run_python**：SQL 不擅长的事——透视表、时间序列重采样、统计、**以及画图**。
+  环境里有 pd / np / plt，用 `query(sql)` 拿 DataFrame；画图不用 `plt.show()`，
+  脚本结束会自动保存并把图展示给用户。
+
+**涉及到"画个图""趋势看看""分布怎么样"时，主动用 run_python 出图**，
+不要只丢一张表格给用户。图比表直观，这是这个工具存在的意义。
 """
 
 
@@ -68,11 +79,12 @@ def build_system_prompt(catalog: dict, notes: str = "", workspace_name: str = ""
     parts.append("")
     parts.append(build_schema_card(catalog))
     parts.append(RULES)
+    parts.append(TOOLS)
 
     if notes:
         parts.append("## 这个数据集已知的情况（人工整理，优先采信）")
         parts.append(notes)
         parts.append("")
 
-    parts.append("现在开始。先用 run_sql 确认数据，再下结论。")
+    parts.append("现在开始。需要看图的时候就用 run_python 画出来。")
     return "\n".join(parts)

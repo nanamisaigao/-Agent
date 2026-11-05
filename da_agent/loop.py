@@ -120,6 +120,10 @@ def run(question: str, client: ChatClient | None = None,
            "workspace": ws.id, "workspace_name": ws.name}
 
     for step in range(1, max_steps + 1):
+        # 让前端知道"正在第几步、在干什么"——模型思考可能要好幾秒，
+        # 没有这个事件，界面在这段时间是完全静止的。
+        yield {"type": "step", "step": step, "max_steps": max_steps, "phase": "thinking"}
+
         try:
             reply = client.complete(messages, schemas())
         except LLMError as exc:

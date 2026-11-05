@@ -77,6 +77,27 @@ function setStatus(text, cls = '') {
   statusEl.className = `status ${cls}`.trim();
 }
 
+/* 步骤计时器：模型思考那几秒如果界面静止，用户不知道它是不是卡住了 */
+let stepTicker = null;
+let stepStartedAt = 0;
+
+function startStepClock(label) {
+  stepStartedAt = Date.now();
+  if (stepTicker) clearInterval(stepTicker);
+  const tick = () => {
+    const seconds = ((Date.now() - stepStartedAt) / 1000).toFixed(1);
+    setStatus(`${label} · ${seconds}s`, 'busy');
+  };
+  tick();
+  stepTicker = setInterval(tick, 200);
+}
+
+function stopStepClock(text = '就绪') {
+  if (stepTicker) clearInterval(stepTicker);
+  stepTicker = null;
+  setStatus(text, text === '就绪' ? '' : 'error');
+}
+
 async function api(path, { method = 'GET', body } = {}) {
   const response = await fetch(path, {
     method,
@@ -125,9 +146,13 @@ function buildToolCard(id, name, args) {
   const empty = $('empty');
   if (empty) empty.remove();
 
-  const sqlText = args && typeof args === 'object' && 'sql' in args
-    ? args.sql
-    : JSON.stringify(args ?? {}, null, 2);
+  const isPython = args && typeof args === 'object' && 'code' in args;
+  const body = isPython
+    ? args.code
+    : (args && typeof args === 'object' && args.sql
+      ? args.sql
+      : JSON.stringify(args ?? {}, null, 2));
+  const label = isPython ? 'Python' : 'SQL';
 
   const card = document.createElement('div');
   card.className = 'msg tool';
@@ -137,10 +162,10 @@ function buildToolCard(id, name, args) {
       <span class="meta" data-role="meta">运行中…</span>
     </div>
     <div class="sql-block">
-      <div class="sql-label">SQL</div>
+      <div class="sql-label">${label}</div>
       <pre></pre>
     </div>`;
-  card.querySelector('pre').textContent = sqlText || '（这次调用没有 SQL 参数）';
+  card.querySelector('pre').textContent = body || '（这次调用没有代码参数）';
 
   logEl.appendChild(card);
   toolCards.set(id, card);
@@ -194,6 +219,35 @@ function fillToolResult(event) {
     card.appendChild(wrap);
   }
 
+  // run_python 的输出与控制台文本
+  if (result.stdout && String(result.stdout).trim()) {
+    const pre = document.createElement('pre');
+    pre.className = 'stdout';
+    pre.textContent = String(result.stdout).trim();
+    card.appendChild(pre);
+  }
+
+  // 产物：图直接显示，文件给下载链接
+  const artifacts = result.artifacts || [];
+  const images = result.images || artifacts.filter((item) => item.kind === 'image').map((item) => item.url);
+  for (const url of images) {
+    const img = document.createElement('img');
+    img.className = 'artifact-img';
+    img.src = url;
+    img.alt = '生成的图表';
+    img.loading = 'lazy';
+    card.appendChild(img);
+  }
+
+  const files = result.files || artifacts.filter((item) => item.kind !== 'image').map((item) => item.url);
+  for (const url of files) {
+    const row = document.createElement('div');
+    row.className = 'artifact-file';
+    const name = String(url).split('/').pop();
+    row.innerHTML = `<a href="${esc(url)}" target="_blank" rel="noopener">${esc(name)}</a>`;
+    card.appendChild(row);
+  }
+
   if (result.hint) {
     const hint = document.createElement('div');
     hint.className = 'hint';
@@ -209,6 +263,9 @@ function handleEvent(event) {
     case 'context':
       state.pendingContext = event;
       break;
+    case 'step':
+      startStepClock(`第 ${event.step}/${event.max_steps} 步 · 思考中`);
+      break;
     case 'run_start': {
       append('user', esc(event.question));
       if (event.session_id) state.activeSession = event.session_id;
@@ -218,16 +275,17 @@ function handleEvent(event) {
           + `${ctx.dropped || 0} 轮省略（约 ${ctx.tokens || 0} tokens）`);
       }
       state.pendingContext = null;
-      setStatus('查询中…', 'busy');
       break;
     }
     case 'text':
       append('narration', esc(event.text));
       break;
     case 'tool_call':
+      startStepClock(`第 ${event.step} 步 · 执行 ${event.name}`);
       addToolCall(event);
       break;
     case 'tool_result':
+      startStepClock(`第 ${event.step} 步 · 处理结果`);
       fillToolResult(event);
       break;
     case 'answer':
@@ -235,13 +293,13 @@ function handleEvent(event) {
       break;
     case 'error':
       append('answer', `<div class="errbox">${esc(event.message)}</div>`);
-      setStatus('出错', 'error');
+      stopStepClock('出错');
       break;
     case 'run_end': {
       const usage = event.usage || {};
       append('usage', `完成 · ${event.steps} 步 · prompt ${usage.prompt_tokens || 0}`
         + ` / completion ${usage.completion_tokens || 0} tokens`);
-      setStatus('就绪', '');
+      stopStepClock();
       break;
     }
     default:
@@ -299,12 +357,13 @@ async function ask(question) {
     if (!statusEl.classList.contains('error')) setStatus('就绪', '');
   } catch (err) {
     append('answer', `<div class="errbox">请求失败：${esc(err.message)}</div>`);
-    setStatus('连接失败', 'error');
+    stopStepClock('连接失败');
   } finally {
     state.busy = false;
     sendBtn.disabled = false;
     inputEl.disabled = false;
     inputEl.focus();
+    stopStepClock();
     // 这一轮可能产生了新会话或改了标题，刷新一下列表
     loadSessions().catch(() => {});
   }

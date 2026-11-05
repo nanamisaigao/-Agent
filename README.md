@@ -9,11 +9,12 @@
 ## 它是什么
 
 - **会自己找数**：模型通过 `run_sql` 工具逐步探索，而不是一次性写出一条巨长的 SQL
+- **能写 Python 画图**：`run_python` 里可以用 pandas 处理、用 matplotlib 出图，图直接显示在对话里
 - **能追问**：会话保存在本地，可以问"那 2018 年呢"，历史超预算会自动压缩
 - **可以换库**：每个数据库是一个「工作区」，接入时自动分析表结构并存到本地
 - **可以换模型**：网页里切换任意 OpenAI 兼容服务（DeepSeek / OpenAI / 本地 Ollama …）
 - **只读安全**：查询只走只读连接，只允许单条 `SELECT`，有超时中断
-- **过程透明**：每一步的 SQL、返回行数、耗时都能看到，出问题能定位到具体哪一次查询
+- **过程透明**：每一步的 SQL / Python、返回行数、耗时都能看到，状态栏实时显示"第几步、跑了多久"
 
 ---
 
@@ -154,10 +155,10 @@ workspaces/
         你提问
           │
           ▼
-   ┌──────────────┐   工具调用    ┌──────────────┐
-   │  agent loop  │ ───────────▶ │    run_sql   │
-   │  (推理)      │ ◀─────────── │  (只读查询)   │
-   └──────┬───────┘   结果+摘要    └──────────────┘
+   ┌──────────────┐  工具调用   ┌──────────────┬────────────────┐
+   │  agent loop  │ ─────────▶ │   run_sql    │   run_python   │
+   │  (推理)      │ ◀───────── │  只读 SQL    │ pandas/matplotlib│
+   └──────┬───────┘  结果+摘要   └──────────────┴────────────────┘
           │
           │ 事件流（纯 JSON）
           ▼
@@ -165,6 +166,16 @@ workspaces/
     │  CLI     │  Web(SSE)  │
     └──────────┴───────────┘
 ```
+
+两个工具的分工：
+
+| 工具 | 干什么 | 什么时候用 |
+|---|---|---|
+| `run_sql` | 一条只读 SELECT | 取数、过滤、join、聚合——能用 SQL 表达的都用它 |
+| `run_python` | 独立子进程跑 pandas / matplotlib | 透视、重采样、统计、**以及画图** |
+
+`run_python` 里预置了 `pd` / `np` / `plt`，还有 `query(sql)` 直接拿 DataFrame。
+画完不用 `plt.show()`：脚本结束时所有开着的图会自动存到 `artifacts/<工作区>/runs/` 并显示在对话里。
 
 核心是**一个内核，多个前端**：`loop.run()` 只负责推理并吐出事件，CLI 和浏览器各自渲染同一批事件。加一个新界面不需要改任何业务逻辑。
 
@@ -212,6 +223,7 @@ da_agent/
   inspect.py     CSV 画像
   ingest.py      CSV → SQLite
   db.py          只读查询：围栏 / 超时 / 错误提示
+  python_exec.py Python 子进程：pandas / matplotlib，收集产物
   context.py     把数据字典压成系统提示
   llm.py         OpenAI 兼容的 /chat/completions（手写 HTTP）
   loop.py        主循环
@@ -219,7 +231,7 @@ da_agent/
   trace.py       事件流落盘
   server.py      FastAPI + SSE
   cli.py         命令行
-  tools/         工具注册表（run_sql）
+  tools/         工具注册表（run_sql / run_python）
 
 web/             前端（原生 ES module，无构建步骤）
   index.html
@@ -258,6 +270,8 @@ docs/            方案文档、截图
 
 | 限制 | 说明 |
 |---|---|
+| `run_python` 不是沙箱 | 模型写的代码就在你的账户下跑（能读写文件、能联网）。它防的是手滑和忘了关的循环，不防恶意代码 |
+| Python 产物会累积 | 每次执行的结果在 `artifacts/<工作区>/runs/` 下，目前不自动清理 |
 | 只支持 SQLite | MySQL/Postgres 需要另写方言适配层 |
 | 模型档案明文存 `config/models.json` | 本地工具，靠 `.gitignore` 兜底；不要在共享机器上用 |
 | 大表跳过精确基数 | 超过 20 万行不算 `COUNT(DISTINCT)`，字典里标注「未统计」 |
@@ -268,7 +282,7 @@ docs/            方案文档、截图
 ## 接下来
 
 - [x] 多轮会话（追问、上下文压缩）
-- [ ] 图表工具（`plot` + 右侧产物面板）
+- [x] 图表工具（`run_python` + matplotlib，图直接显示在对话里）
 - [ ] 会话历史与回放
 - [ ] 更多数据源（CSV / Parquet / Postgres）
 
