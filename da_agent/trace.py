@@ -28,5 +28,6 @@ def write_trace(events, directory: Path = TRACES_DIR) -> Path | None:
     path.write_text(
         "\n".join(json.dumps(event, ensure_ascii=False, default=str) for event in records),
         encoding="utf-8",
+        newline="\n",
     )
     return path

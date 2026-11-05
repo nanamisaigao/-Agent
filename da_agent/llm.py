@@ -35,9 +35,29 @@ class LLMReply:
     reasoning: str | None = None                          # 思维链（DeepSeek 的 reasoning_content）
 
 
+def _provider_message(detail: str) -> str:
+    """把各家服务返回的错误体压成一句话。
+
+    大多数兼容服务给的是 {"error": {"message": "...", "type": "..."}}，
+    直接糊进界面会是一大段 JSON，用户看不懂。
+    """
+    detail = (detail or "").strip()
+    try:
+        data = json.loads(detail)
+    except json.JSONDecodeError:
+        return detail[:300] or "（无错误信息）"
+
+    error = data.get("error") if isinstance(data, dict) else None
+    if isinstance(error, dict):
+        return str(error.get("message") or error)[:300]
+    if error:
+        return str(error)[:300]
+    return str(data)[:300]
+
+
 def _parse(data: dict) -> LLMReply:
     if isinstance(data.get("error"), dict) and data["error"]:
-        raise LLMError(str(data["error"])[:400])
+        raise LLMError(_provider_message(json.dumps(data, ensure_ascii=False)))
     if not data.get("choices"):
         raise LLMError(f"响应里没有 choices：{str(data)[:300]}")
 
@@ -108,11 +128,12 @@ def chat(messages: list[dict], tools: list[dict] | None = None,
                 return _parse(json.loads(response.read().decode("utf-8")))
         except urllib.error.HTTPError as exc:
             detail = exc.read().decode("utf-8", "replace")[:500]
+            message = _provider_message(detail)
             if exc.code in (408, 409, 429) or exc.code >= 500:
-                last_error = LLMError(f"HTTP {exc.code}：{detail}")
+                last_error = LLMError(f"HTTP {exc.code}：{message}")
                 time.sleep(2 * (attempt + 1))
                 continue
-            raise LLMError(f"HTTP {exc.code}：{detail}") from None
+            raise LLMError(f"HTTP {exc.code}：{message}") from None
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
             last_error = LLMError(f"网络错误：{exc}")
             time.sleep(2 * (attempt + 1))

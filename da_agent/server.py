@@ -216,8 +216,12 @@ def delete_model(profile_id: str) -> dict:
 def health() -> dict:
     try:
         ws = current()
-        return {"ok": True, "workspace": ws.id, "db": ws.db.exists(),
-                "model": models.public_state().get("active")}
+        state = models.public_state()
+        active = state.get("active")
+        label = next((item["name"] for item in state["items"] if item["id"] == active), None)
+        if label is None and state.get("fallback"):
+            label = f".env:{state['fallback']['model']}"
+        return {"ok": True, "workspace": ws.id, "db": ws.db.exists(), "model": label}
     except Exception as exc:
         return {"ok": False, "error": str(exc)}
 

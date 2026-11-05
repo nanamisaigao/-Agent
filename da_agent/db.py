@@ -53,8 +53,12 @@ class QueryResult:
 # 连接
 # --------------------------------------------------------------------------- #
 
-def connect_ro(path: Path = DB_PATH) -> sqlite3.Connection:
-    """只读连接。路径要用正斜杠，Windows 的反斜杠在 file: URI 里会被当成转义。"""
+def connect_ro(path: Path) -> sqlite3.Connection:
+    """只读连接。路径要用正斜杠，Windows 的反斜杠在 file: URI 里会被当成转义。
+
+    路径是必填的：早期版本默认指向 data/olist.db，多工作区之后那个默认值
+    只会变成"忘了传参就用错库"的陷阱。
+    """
     uri = f"file:{Path(path).as_posix()}?mode=ro"
     return sqlite3.connect(uri, uri=True, timeout=5.0)
 
@@ -113,8 +117,12 @@ def _hint(conn: sqlite3.Connection | None, error: str) -> str:
     return ""
 
 
-def run_query(sql: str, limit: int = 50, timeout: float = 30.0,
-              path: Path = DB_PATH) -> QueryResult:
+def run_query(sql: str, *, path: Path, limit: int = 50,
+              timeout: float = 30.0) -> QueryResult:
+    """执行一条只读查询。
+
+    path 是关键字必填参数：多工作区下没有"默认库"这回事。
+    """
     result = QueryResult(ok=False, sql=sql)
 
     refused = check_sql(sql)

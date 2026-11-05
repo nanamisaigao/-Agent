@@ -222,12 +222,12 @@ def create(db_path: Path, name: str | None = None, notes: str = "",
 
     catalog = catalog or profile_db(db_path)
     (folder / "catalog.json").write_text(
-        json.dumps(catalog, ensure_ascii=False, indent=2), encoding="utf-8")
+        json.dumps(catalog, ensure_ascii=False, indent=2), encoding="utf-8", newline="\n")
 
     # 已存在的 notes.md 不覆盖——人写的东西比自动生成的值钱
     notes_path = folder / "notes.md"
     if not notes_path.exists():
-        notes_path.write_text(notes, encoding="utf-8")
+        notes_path.write_text(notes, encoding="utf-8", newline="\n")
 
     meta = {
         "id": ws_id,
@@ -236,7 +236,7 @@ def create(db_path: Path, name: str | None = None, notes: str = "",
         "created_at": datetime.now().isoformat(timespec="seconds"),
     }
     (folder / "workspace.json").write_text(
-        json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+        json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8", newline="\n")
 
     return load(ws_id)
 
@@ -293,7 +293,7 @@ def set_active(ws_id: str) -> None:
     load(ws_id)                                  # 不存在就直接报错，别写坏 active
     WORKSPACES_DIR.mkdir(parents=True, exist_ok=True)
     ACTIVE_WS_FILE.write_text(
-        json.dumps({"id": ws_id}, ensure_ascii=False, indent=2), encoding="utf-8")
+        json.dumps({"id": ws_id}, ensure_ascii=False, indent=2), encoding="utf-8", newline="\n")
 
 
 def current() -> Workspace:

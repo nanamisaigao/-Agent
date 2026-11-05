@@ -254,7 +254,8 @@ def build(db_path: Path = DB_PATH, catalog_path: Path = CATALOG_PATH) -> dict:
         stats.extend(build_derived(conn))
 
         catalog = build_catalog(conn)
-        catalog_path.write_text(json.dumps(catalog, ensure_ascii=False, indent=2), encoding="utf-8")
+        catalog_path.write_text(json.dumps(catalog, ensure_ascii=False, indent=2),
+                                encoding="utf-8", newline="\n")
     finally:
         conn.close()
 

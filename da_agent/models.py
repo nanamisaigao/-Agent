@@ -73,7 +73,8 @@ def _read() -> dict:
 
 def _write(data: dict) -> None:
     MODELS_FILE.parent.mkdir(parents=True, exist_ok=True)
-    MODELS_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    MODELS_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2),
+                           encoding="utf-8", newline="\n")
 
 
 def _slug(name: str) -> str:

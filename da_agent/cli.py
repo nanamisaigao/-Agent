@@ -30,6 +30,21 @@ app.add_typer(ws_app, name="ws")
 console = Console()
 
 
+def _load_workspace(ws_id: str | None):
+    """按 ID 取工作区；不存在时给一句人话并退出，而不是抛 traceback。"""
+    from .workspace import current, list_all, load
+
+    try:
+        return load(ws_id) if ws_id else current()
+    except FileNotFoundError as exc:
+        console.print(f"[red]{exc}[/red]")
+        if ws_id:
+            available = ", ".join(meta["id"] for meta in list_all()) or "（还没有工作区）"
+            console.print(f"[dim]可用工作区：{available}[/dim]")
+            console.print("[dim]`ws list` 查看，`ws add <数据库路径>` 添加[/dim]")
+        raise typer.Exit(code=1) from None
+
+
 # --------------------------------------------------------------------------- #
 # 基础
 # --------------------------------------------------------------------------- #
@@ -93,7 +108,7 @@ def profile(
 
     if json_out:
         json_out.parent.mkdir(parents=True, exist_ok=True)
-        json_out.write_text(to_json(profiles), encoding="utf-8")
+        json_out.write_text(to_json(profiles), encoding="utf-8", newline="\n")
         console.print(f"\n[dim]完整画像已写入 {json_out}[/dim]")
 
 
@@ -168,9 +183,9 @@ def ws_add(
 @ws_app.command("use")
 def ws_use(ws_id: str = typer.Argument(..., help="工作区 ID")) -> None:
     """切换当前工作区。"""
-    from .workspace import load, set_active
+    from .workspace import set_active
 
-    workspace = load(ws_id)
+    workspace = _load_workspace(ws_id)
     set_active(workspace.id)
     console.print(f"当前工作区：[green]{workspace.name}[/green]（{workspace.id}）")
 
@@ -178,9 +193,7 @@ def ws_use(ws_id: str = typer.Argument(..., help="工作区 ID")) -> None:
 @ws_app.command("show")
 def ws_show(ws_id: str = typer.Argument(None, help="工作区 ID，默认当前")) -> None:
     """查看某个工作区的数据字典和业务笔记。"""
-    from .workspace import current, load
-
-    workspace = load(ws_id) if ws_id else current()
+    workspace = _load_workspace(ws_id)
     console.print(f"[bold]{workspace.name}[/bold]  [dim]({workspace.id})[/dim]")
     console.print(f"[dim]{workspace.db}[/dim]\n")
 
@@ -201,9 +214,9 @@ def ws_show(ws_id: str = typer.Argument(None, help="工作区 ID，默认当前"
 @ws_app.command("refresh")
 def ws_refresh(ws_id: str = typer.Argument(None, help="工作区 ID，默认当前")) -> None:
     """重新分析数据库结构（数据变了之后用）。notes.md 不会被覆盖。"""
-    from .workspace import create, current, load
+    from .workspace import create
 
-    workspace = load(ws_id) if ws_id else current()
+    workspace = _load_workspace(ws_id)
     console.print("[dim]重新分析中…[/dim]")
     refreshed = create(workspace.db, name=workspace.name, ws_id=workspace.id)
     console.print(f"[green]已刷新[/green] {refreshed.name}：{refreshed.tables} 张表，"
@@ -280,9 +293,8 @@ def sql(
 ) -> None:
     """在只读连接上执行一条 SELECT，看到 agent 将来看到的那份结果。"""
     from .db import run_query, summary_line
-    from .workspace import current, load
 
-    workspace = load(ws) if ws else current()
+    workspace = _load_workspace(ws)
     result = run_query(query, limit=limit, timeout=timeout, path=workspace.db)
 
     if as_json:
@@ -372,9 +384,8 @@ def ask(
     from .llm import EchoClient
     from .loop import ApiClient, run
     from .trace import write_trace
-    from .workspace import current, load
 
-    workspace = load(ws) if ws else current()
+    workspace = _load_workspace(ws)
     console.rule(f"[bold]{question}[/bold] [dim]· {workspace.name}[/dim]")
     client = EchoClient() if fake else ApiClient(models.current_settings())
 
