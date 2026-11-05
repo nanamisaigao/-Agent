@@ -14,5 +14,6 @@ artifacts/
 .env.*
 !.env.example
 
+config/
 workspaces/*/catalog.json
 workspaces/active.json
