@@ -24,9 +24,10 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from . import models
+from . import providers as provider_catalog
 from . import session as session_store
 from .config import ARTIFACTS_DIR, PROJECT_ROOT
-from .llm import EchoClient
+from .llm import EchoClient, list_models, probe
 from .loop import ApiClient, run
 from .trace import write_trace
 from .workspace import create, current, list_all, load, set_active, suggest_questions
@@ -61,6 +62,18 @@ class ModelIn(BaseModel):
     name: str
     base_url: str = "https://api.deepseek.com"
     model: str = "deepseek-flash"
+    api_key: str = Field(min_length=1)
+    thinking: str | None = None
+
+
+class DiscoverIn(BaseModel):
+    base_url: str
+    api_key: str = Field(min_length=1)
+
+
+class ProbeIn(BaseModel):
+    base_url: str
+    model: str
     api_key: str = Field(min_length=1)
     thinking: str | None = None
 
@@ -231,8 +244,30 @@ def delete_session(session_id: str, workspace: str | None = None) -> dict:
 # 模型
 # --------------------------------------------------------------------------- #
 
+@app.get("/api/providers")
+def providers() -> dict:
+    """常用服务商预设（仅供填表，不是权威配置）。"""
+    return {"checked": provider_catalog.CHECKED, "items": provider_catalog.to_dicts()}
+
+
+@app.post("/api/models/discover")
+def discover_models(body: DiscoverIn) -> dict:
+    """拿 key 去问服务端有哪些模型可用。"""
+    try:
+        ids = list_models(body.base_url, body.api_key)
+    except Exception as exc:
+        raise HTTPException(400, str(exc)) from None
+    return {"ok": True, "models": ids}
+
+
+@app.post("/api/models/test")
+def test_model(body: ProbeIn) -> dict:
+    """用一句话验证 key / 地址 / 模型名三件套是否对得上。"""
+    return probe(body.base_url, body.model, body.api_key, body.thinking)
+
+
 @app.get("/api/models")
-def list_models() -> dict:
+def list_models_endpoint() -> dict:
     return models.public_state()
 
 

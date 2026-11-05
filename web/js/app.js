@@ -22,6 +22,9 @@ const state = {
   activeWs: null,
   tables: [],
   models: { items: [], active: null, fallback: null },
+  providers: [],
+  providersChecked: '',
+  selectedProvider: null,
   sessions: [],
   activeSession: null,
   pendingContext: null,
@@ -634,29 +637,171 @@ $('ws-submit').addEventListener('click', async () => {
 /* 模型设置 */
 $('btn-model').addEventListener('click', () => {
   $('m-error').hidden = true;
+  $('m-ok').hidden = true;
   renderModelList();
+  renderProviderGrid();
+  if (!state.selectedProvider && state.providers.length) {
+    applyProvider(state.providers[0].id);
+  }
   openModal('modal-model');
 });
 
+function modelProvider() {
+  return state.providers.find((p) => p.id === state.selectedProvider) || null;
+}
+
+function showModelError(text) {
+  $('m-ok').hidden = true;
+  $('m-error').textContent = text;
+  $('m-error').hidden = false;
+}
+
+function setModelOk(text) {
+  $('m-error').hidden = true;
+  $('m-ok').textContent = text;
+  $('m-ok').hidden = false;
+}
+
+function renderProviderGrid() {
+  const box = $('provider-grid');
+  box.innerHTML = '';
+  for (const provider of state.providers) {
+    const card = document.createElement('button');
+    card.type = 'button';
+    card.className = `provider-card${provider.id === state.selectedProvider ? ' active' : ''}`;
+    card.title = provider.base_url ? `${provider.note || ''}\n${provider.base_url}` : (provider.note || '');
+    card.innerHTML = `<span class="pc-name">${esc(provider.name)}</span>`
+      + `<span class="pc-note">${esc(provider.note || provider.base_url)}</span>`;
+    card.onclick = () => applyProvider(provider.id);
+    box.appendChild(card);
+  }
+}
+
+function applyProvider(id) {
+  const provider = state.providers.find((p) => p.id === id);
+  if (!provider) return;
+
+  state.selectedProvider = id;
+  renderProviderGrid();
+
+  if (provider.id === 'custom') {
+    $('m-base').value = '';
+    $('m-model').value = '';
+    $('model-options').innerHTML = '';
+  } else {
+    $('m-base').value = provider.base_url;
+    $('model-options').innerHTML = provider.models
+      .map((name) => `<option value="${esc(name)}"></option>`).join('');
+    $('m-model').value = provider.models[0] || '';
+  }
+  $('m-name').value = provider.id === 'custom' ? '' : provider.name;
+  $('m-hint').textContent = provider.key_url
+    ? `API Key 申请：${provider.key_url}`
+    : (provider.note || '');
+
+  $('m-error').hidden = true;
+  $('m-ok').hidden = true;
+  $('m-key').focus();
+}
+
+async function loadProviders() {
+  try {
+    const data = await api('/api/providers');
+    state.providers = data.items || [];
+    state.providersChecked = data.checked;
+    renderProviderGrid();
+  } catch (err) {
+    console.warn('服务商预设加载失败', err);
+  }
+}
+
+$('m-discover').addEventListener('click', async () => {
+  const baseUrl = $('m-base').value.trim();
+  const apiKey = $('m-key').value.trim();
+  const button = $('m-discover');
+
+  if (!baseUrl || !apiKey) {
+    showModelError('先填 Base URL 和 API Key，再拉列表');
+    return;
+  }
+
+  button.disabled = true;
+  button.textContent = '获取中…';
+  try {
+    const data = await api('/api/models/discover',
+      { method: 'POST', body: { base_url: baseUrl, api_key: apiKey } });
+    $('model-options').innerHTML = data.models
+      .map((name) => `<option value="${esc(name)}"></option>`).join('');
+    if (!data.models.length) {
+      showModelError('服务端返回了空列表，检查权限或地址');
+    } else {
+      if (!$('m-model').value) $('m-model').value = data.models[0];
+      setModelOk(`找到 ${data.models.length} 个模型，点模型名输入框可以挑`);
+    }
+  } catch (err) {
+    showModelError(err.message);
+  } finally {
+    button.disabled = false;
+    button.textContent = '获取列表';
+  }
+});
+
+$('m-test').addEventListener('click', async () => {
+  const baseUrl = $('m-base').value.trim();
+  const model = $('m-model').value.trim();
+  const apiKey = $('m-key').value.trim();
+  const button = $('m-test');
+
+  if (!baseUrl || !model || !apiKey) {
+    showModelError('Base URL、模型名、API Key 三个都要填');
+    return;
+  }
+
+  button.disabled = true;
+  button.textContent = '测试中…';
+  try {
+    const provider = modelProvider();
+    const data = await api('/api/models/test', {
+      method: 'POST',
+      body: {
+        base_url: baseUrl,
+        model,
+        api_key: apiKey,
+        thinking: provider ? provider.thinking : null,
+      },
+    });
+    if (data.ok) setModelOk(`${data.message}（${data.latency_ms} ms）`);
+    else showModelError(data.message);
+  } catch (err) {
+    showModelError(err.message);
+  } finally {
+    button.disabled = false;
+    button.textContent = '测试连接';
+  }
+});
+
 $('m-submit').addEventListener('click', async () => {
+  const provider = modelProvider();
   const payload = {
     name: $('m-name').value.trim() || $('m-model').value.trim(),
     base_url: $('m-base').value.trim(),
     model: $('m-model').value.trim(),
     api_key: $('m-key').value.trim(),
+    thinking: provider ? provider.thinking : null,
   };
-  const errorEl = $('m-error');
-  const submit = $('m-submit');
 
+  if (!payload.base_url || !payload.model) {
+    showModelError('Base URL 和模型名不能为空');
+    return;
+  }
   if (!payload.api_key) {
-    errorEl.textContent = '请填 API Key';
-    errorEl.hidden = false;
+    showModelError('请填 API Key');
     return;
   }
 
+  const submit = $('m-submit');
   submit.disabled = true;
   submit.textContent = '保存中…';
-  errorEl.hidden = true;
 
   try {
     const result = await api('/api/models', { method: 'POST', body: payload });
@@ -665,11 +810,10 @@ $('m-submit').addEventListener('click', async () => {
     renderModelList();
     $('m-key').value = '';
     $('m-name').value = '';
-    $('add-model').open = false;
     setStatus(`当前模型：${payload.name}`, '');
+    setModelOk('已保存并切换');
   } catch (err) {
-    errorEl.textContent = err.message;
-    errorEl.hidden = false;
+    showModelError(err.message);
   } finally {
     submit.disabled = false;
     submit.textContent = '保存并启用';
@@ -780,6 +924,7 @@ async function boot() {
     await loadWorkspaces();
     refreshEmpty();          // 工作区数据到了才知道该推荐什么问题
     await loadModels();
+    await loadProviders();
     await loadTables();
     await loadSessions();
     setStatus('就绪', '');
@@ -810,6 +955,11 @@ async function boot() {
     } catch (err) {
       setStatus(`打开工作区失败：${err.message}`, 'error');
     }
+  }
+
+  // ?panel=model 直接打开模型设置（截图和排查用）
+  if (params.get('panel') === 'model') {
+    $('btn-model').click();
   }
 
   const urlSession = params.get('session');

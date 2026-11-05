@@ -141,6 +141,55 @@ def chat(messages: list[dict], tools: list[dict] | None = None,
     raise last_error or LLMError("调用模型失败（未知原因）")
 
 
+def list_models(base_url: str, api_key: str, timeout: float = 20.0) -> list[str]:
+    """问服务商要模型列表（GET {base}/models）。
+
+    比在代码里硬编码模型名靠谱：各家随时上下架，只有服务端知道现在有什么。
+    """
+    url = base_url.rstrip("/") + "/models"
+    request = urllib.request.Request(url, headers={
+        "Authorization": f"Bearer {api_key}",
+        "User-Agent": "da-agent/0.1",
+    })
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            data = json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", "replace")[:500]
+        raise LLMError(f"HTTP {exc.code}：{_provider_message(detail)}") from None
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        raise LLMError(f"网络错误：{exc}") from None
+
+    items = data.get("data") or data.get("models") or []
+    ids: list[str] = []
+    for item in items:
+        if isinstance(item, dict):
+            value = item.get("id") or item.get("name")
+        else:
+            value = item
+        if value:
+            ids.append(str(value))
+    return sorted(set(ids))
+
+
+def probe(base_url: str, model: str, api_key: str,
+          thinking: str | None = None) -> dict:
+    """用最小请求验证 key + 地址 + 模型名是否对得上。"""
+    from .config import LLMSettings
+
+    settings = LLMSettings(base_url=base_url, api_key=api_key, model=model,
+                           timeout=30.0, thinking=thinking)
+    started = time.perf_counter()
+    try:
+        reply = chat([{"role": "user", "content": "回复两个字：可用"}], None, settings, attempts=1)
+    except LLMError as exc:
+        return {"ok": False, "message": str(exc), "latency_ms": 0}
+
+    elapsed = int((time.perf_counter() - started) * 1000)
+    preview = (reply.content or "").strip().replace("\n", " ")[:40]
+    return {"ok": True, "message": f"连接正常：{preview or '（空回复）'}", "latency_ms": elapsed}
+
+
 # --------------------------------------------------------------------------- #
 # 离线演示客户端：不联网也能验证整个循环
 # --------------------------------------------------------------------------- #

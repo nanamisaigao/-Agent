@@ -101,29 +101,39 @@
       <div class="modal-body">
         <div class="model-list" id="model-list"></div>
 
-        <details class="add-model" id="add-model">
-          <summary>＋ 添加模型</summary>
-          <div class="form">
-            <label class="field">
-              <span>显示名</span>
-              <input id="m-name" placeholder="DeepSeek" />
-            </label>
-            <label class="field">
-              <span>Base URL</span>
-              <input id="m-base" value="https://api.deepseek.com" />
-            </label>
-            <label class="field">
-              <span>模型名</span>
-              <input id="m-model" value="deepseek-flash" />
-            </label>
-            <label class="field">
-              <span>API Key</span>
-              <input id="m-key" type="password" placeholder="sk-…" autocomplete="off" />
-            </label>
-            <p class="form-error" id="m-error" hidden></p>
-            <button id="m-submit">保存并启用</button>
+        <div class="section-title">添加模型</div>
+        <div class="provider-grid" id="provider-grid"></div>
+
+        <div class="form" id="model-form">
+          <label class="field">
+            <span>显示名</span>
+            <input id="m-name" placeholder="DeepSeek" />
+          </label>
+          <label class="field">
+            <span>Base URL</span>
+            <input id="m-base" placeholder="https://api.deepseek.com" />
+          </label>
+          <div class="field">
+            <span>模型名</span>
+            <div class="field-row">
+              <input id="m-model" list="model-options" placeholder="deepseek-flash" />
+              <button type="button" class="ghost small" id="m-discover">获取列表</button>
+            </div>
+            <datalist id="model-options"></datalist>
           </div>
-        </details>
+          <label class="field">
+            <span>API Key</span>
+            <input id="m-key" type="password" placeholder="sk-…" autocomplete="off" />
+          </label>
+          <p class="hint-text" id="m-hint"></p>
+          <p class="form-error" id="m-error" hidden></p>
+          <p class="form-ok" id="m-ok" hidden></p>
+          <p class="hint-text">预设只是参考，地址和模型名都可以直接改。</p>
+        </div>
+      </div>
+      <div class="modal-foot">
+        <button type="button" class="ghost" id="m-test">测试连接</button>
+        <button type="button" id="m-submit">保存并启用</button>
       </div>
     </div>
   </div>
