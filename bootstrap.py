@@ -37,6 +37,20 @@ MIRROR = "https://pypi.tuna.tsinghua.edu.cn/simple"
 # 输出
 # --------------------------------------------------------------------------- #
 
+def safe_console() -> None:
+    """让输出永远不会因为编码崩掉。
+
+    中文 Windows 控制台默认是 GBK，打印 ✓ ✗ 这类字符会直接抛
+    UnicodeEncodeError。改成 errors="replace" 后，编不出来的字符变问号，
+    而不是让整个安装脚本挂掉。保留原编码，中文仍能正常显示。
+    """
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(errors="replace")
+        except Exception:
+            pass
+
+
 def line(text: str = "") -> None:
     print(text, flush=True)
 
@@ -47,10 +61,10 @@ def step(index: int, total: int, text: str) -> None:
 
 def fail(text: str, hint: str = "") -> None:
     line()
-    line(f"  ✗ {text}")
+    line(f"  [FAIL] {text}")
     if hint:
         for row in hint.splitlines():
-            line(f"    {row}")
+            line(f"         {row}")
     line()
 
 
@@ -103,6 +117,8 @@ def free_port(start: int) -> int:
 # --------------------------------------------------------------------------- #
 
 def main() -> int:
+    safe_console()
+
     parser = argparse.ArgumentParser(description="安装依赖并启动 da_agent")
     parser.add_argument("--no-serve", action="store_true", help="只安装，不启动")
     parser.add_argument("--port", type=int, default=DEFAULT_PORT, help="网页端口")
@@ -172,7 +188,7 @@ def main() -> int:
     line()
 
     if args.no_serve:
-        line("  ✓ 安装完成。启动命令：python -m da_agent.cli serve")
+        line("  [OK] 安装完成。启动命令：python -m da_agent.cli serve")
         line()
         return 0
 

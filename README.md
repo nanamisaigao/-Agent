@@ -156,7 +156,10 @@ workspaces/
     notes.md         # 业务知识（人写，不会被覆盖）
 ```
 
-**`notes.md` 是这个设计里最有用的部分**：自动分析只能看出「`customer_id` 值唯一」，看不出「它其实是每单一个号、不是真客户」。把你踩过的坑写进去，agent 每次都会读到。
+**`notes.md` 是这个设计里最有用的部分**：自动分析只能看出「`customer_id` 值唯一」，看不出「它其实是每单一个号、不是真客户」。把你踩过的坑写进去，agent 每次都会读到。写法参考 [docs/notes-example.md](docs/notes-example.md)。
+
+> 整个 `workspaces/` 都在 `.gitignore` 里——`workspace.json` 存着本机绝对路径，`sessions/` 是你的对话记录。
+> 所以笔记不会进版本库，重要的话自己单独备份。
 
 ---
 

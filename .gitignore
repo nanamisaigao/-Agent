@@ -9,13 +9,15 @@ artifacts/
 
 # pip / 工具临时目录
 .tmp/
+
 # 密钥
 .env
 .env.*
 !.env.example
-
 config/
-workspaces/*/catalog.json
-workspaces/active.json
 
+
+workspaces/*/workspace.json
+workspaces/*/catalog.json
 workspaces/*/sessions/
+workspaces/active.json

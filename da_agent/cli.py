@@ -31,6 +31,19 @@ app.add_typer(ws_app, name="ws")
 console = Console()
 
 
+def safe_console() -> None:
+    """中文 Windows 控制台是 GBK，输出里出现编不出来的字符会直接抛异常。
+
+    把 stdout/stderr 的错误策略改成 replace：编不出来变问号，别让程序挂掉。
+    模型输出的文本（流式 token、答案）最容易带进来这种字符。
+    """
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(errors="replace")
+        except Exception:
+            pass
+
+
 def _load_workspace(ws_id: str | None):
     """按 ID 取工作区；不存在时给一句人话并退出，而不是抛 traceback。"""
     from .workspace import current, list_all, load
@@ -370,7 +383,7 @@ def _render(event: dict, streamed: bool = False) -> None:
     elif kind == "tool_result":
         result = event.get("result") or {}
         if not result.get("ok"):
-            console.print(f"[red]✗ {result.get('error')}[/red]")
+            console.print(f"[red][x] {result.get('error')}[/red]")
             if result.get("hint"):
                 console.print(f"[yellow]  {result['hint']}[/yellow]")
             return
@@ -431,6 +444,8 @@ def ask(
     from .loop import ApiClient, run
     from .trace import write_trace
 
+    safe_console()          # 流式输出是裸写 stdout，先保证编码不会崩
+
     workspace = _load_workspace(ws)
     session = (session_store.load(workspace, session_id) if session_id
                else session_store.create(workspace))
@@ -472,7 +487,7 @@ def serve(
     import uvicorn
 
     if host not in ("127.0.0.1", "localhost", "::1"):
-        console.print("[yellow]⚠ 注意：服务没有登录鉴权，而 run_python 会执行模型写的代码。[/yellow]")
+        console.print("[yellow][!] 注意：服务没有登录鉴权，而 run_python 会执行模型写的代码。[/yellow]")
         console.print("[yellow]  绑定到非本机地址，等于把代码执行能力开放给整个网络。[/yellow]")
         console.print("[yellow]  只在可信内网这么用，公网请套反向代理加认证。[/yellow]")
         console.print()
@@ -482,6 +497,7 @@ def serve(
 
 
 def main() -> None:
+    safe_console()
     app()
 
 

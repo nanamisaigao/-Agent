@@ -1,4 +1,6 @@
-# 运行时依赖。按阶段添加，不提前装用不上的东西。
+# Runtime dependencies. Add per stage; don't install what you don't need yet.
+# Keep this file ASCII-only: pip reads requirements files with the locale
+# encoding on some setups and crashes on non-ASCII comments.
 pandas>=2.2
 pyarrow>=15
 matplotlib>=3.8
@@ -7,6 +9,6 @@ rich>=13
 pydantic>=2.7
 chardet>=5
 
-# Web 前端（第 5、6 步）
+# Web UI (FastAPI + SSE)
 fastapi>=0.110
 uvicorn[standard]>=0.29

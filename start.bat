@@ -1,4 +1,6 @@
 @echo off
+rem Keep this file ASCII-only. cmd.exe reads batch files using the console
+rem code page; a UTF-8 batch containing Chinese breaks on some machines.
 chcp 65001 >nul
 setlocal
 cd /d "%~dp0"
@@ -11,12 +13,12 @@ if not defined PY (
 
 if not defined PY (
   echo.
-  echo   [错误] 没有找到 Python。
+  echo   [ERROR] Python not found.
   echo.
-  echo   请先安装 Python 3.10 或更高版本：
+  echo   Install Python 3.10 or newer first:
   echo     https://www.python.org/downloads/
   echo.
-  echo   安装时务必勾选 "Add python.exe to PATH"，装完重新双击本文件。
+  echo   During setup tick "Add python.exe to PATH", then run this file again.
   echo.
   pause
   exit /b 1
