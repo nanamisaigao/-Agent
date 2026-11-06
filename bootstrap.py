@@ -19,7 +19,9 @@ import socket
 import subprocess
 import sys
 import threading
+import traceback
 import webbrowser
+from datetime import datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
@@ -27,6 +29,7 @@ VENV = ROOT / ".venv"
 # 依赖指纹放在 artifacts 下（已 gitignore、可写），不放 .venv 里——
 # 有些环境会对 venv 目录做额外保护，写失败也没必要让启动挂掉
 DEPS_MARK = ROOT / "artifacts" / ".da_deps"
+LOG_DIR = ROOT / "artifacts" / "logs"
 MIN_VERSION = (3, 10)
 
 DEFAULT_PORT = 8123
@@ -51,8 +54,45 @@ def safe_console() -> None:
             pass
 
 
+_log = None
+_log_path: Path | None = None
+
+
+def open_log() -> Path | None:
+    """把控制台输出同时写一份到 artifacts/logs/。
+
+    出问题时只要把这个文件发出去就行——不用让用户回忆屏幕上的内容。
+    """
+    global _log, _log_path
+    try:
+        LOG_DIR.mkdir(parents=True, exist_ok=True)
+        _log_path = LOG_DIR / f"bootstrap-{datetime.now():%Y%m%d-%H%M%S}.log"
+        _log = _log_path.open("w", encoding="utf-8", newline="\n")
+        return _log_path
+    except OSError:
+        return None
+
+
 def line(text: str = "") -> None:
     print(text, flush=True)
+    if _log:
+        try:
+            _log.write(text + "\n")
+            _log.flush()
+        except Exception:
+            pass
+
+
+def log_exception() -> None:
+    """把完整 traceback 同时写进日志文件。"""
+    text = traceback.format_exc()
+    print(text, file=sys.stderr, flush=True)
+    if _log:
+        try:
+            _log.write(text + "\n")
+            _log.flush()
+        except Exception:
+            pass
 
 
 def step(index: int, total: int, text: str) -> None:
@@ -118,6 +158,7 @@ def free_port(start: int) -> int:
 
 def main() -> int:
     safe_console()
+    log_path = open_log()
 
     parser = argparse.ArgumentParser(description="安装依赖并启动 da_agent")
     parser.add_argument("--no-serve", action="store_true", help="只安装，不启动")
@@ -138,6 +179,8 @@ def main() -> int:
         return 1
     line(f"  Python {version}（{sys.executable}）")
     line(f"  项目目录 {ROOT}")
+    if log_path:
+        line(f"  日志     {log_path}")
     line()
 
     total = 3 if args.no_serve else 4
@@ -219,3 +262,13 @@ if __name__ == "__main__":
         sys.exit(main())
     except KeyboardInterrupt:
         sys.exit(0)
+    except SystemExit:
+        raise
+    except Exception:
+        log_exception()
+        line()
+        line("  启动过程中出错了。完整日志已经写到这里：")
+        line(f"    {_log_path}" if _log_path else "    （日志文件没能创建，请复制上面的报错）")
+        line("  把这个文件发给我就能定位问题。")
+        line()
+        sys.exit(1)

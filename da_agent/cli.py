@@ -484,7 +484,24 @@ def serve(
     port: int = typer.Option(8123, "--port", help="端口"),
 ) -> None:
     """启动 Web 界面。"""
+    import logging
+
     import uvicorn
+
+    from .config import ARTIFACTS_DIR
+
+    # 日志同时进控制台和文件：出问题时把文件发出来就够了，不用回忆屏幕内容
+    log_dir = ARTIFACTS_DIR / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_path = log_dir / "server.log"
+
+    file_handler = logging.FileHandler(log_path, encoding="utf-8")
+    file_handler.setFormatter(logging.Formatter(
+        "%(asctime)s %(levelname)-7s %(name)s: %(message)s"))
+    console_handler = logging.StreamHandler()
+    console_handler.setFormatter(logging.Formatter("%(levelname)s: %(message)s"))
+    logging.basicConfig(level=logging.INFO,
+                        handlers=[console_handler, file_handler], force=True)
 
     if host not in ("127.0.0.1", "localhost", "::1"):
         console.print("[yellow][!] 注意：服务没有登录鉴权，而 run_python 会执行模型写的代码。[/yellow]")
@@ -493,7 +510,10 @@ def serve(
         console.print()
 
     console.print(f"[bold]打开 http://{host}:{port}[/bold]  （Ctrl+C 停止）")
-    uvicorn.run("da_agent.server:app", host=host, port=port, log_level="warning")
+    console.print(f"[dim]日志：{log_path}[/dim]")
+    # log_config=None：交给上面配好的 logging，否则 uvicorn 会重置 handlers
+    uvicorn.run("da_agent.server:app", host=host, port=port,
+                log_level="info", log_config=None)
 
 
 def main() -> None:
